@@ -7,16 +7,22 @@ The wrapper itself is uploaded separately, but it's not yet a package (nor compl
 ### Packages/Modules/Custom Scripts Used
 ```py
 import os
-import dotenv
-import logging
-import typing
 import time
+import dotenv
+import typing
 import asyncio
+import logging
+from functools import reduce
+from operator import getitem
+from datetime import datetime 
+from datetime import timedelta 
 
 import crescent
 from crescent.ext import tasks
 import hikari
 from discord_webhook import AsyncDiscordWebhook
+import numpy as np
+import pandas as pd
 
 import notion # custom wrapper.
 import notion.query as query # ext. to above.
