@@ -22,21 +22,18 @@ logger.setLevel(logging.DEBUG)
 
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 WEBHOOK_NOTION_INTEGRATION = os.getenv('WEBHOOK_NOTION_INTEGRATION')
-TIMETRACK_DB_ID = os.getenv('TIMETRACK_DB_ID')
 
+TIMETRACK_DB_ID = os.getenv('TIMETRACK_DB_ID')
 TIMETRACK_DB = notion.Database(TIMETRACK_DB_ID)
 
-INTENTS = (
-    hikari.Intents.ALL_PRIVILEGED 
-  | hikari.Intents.DM_MESSAGES 
-  | hikari.Intents.GUILD_MESSAGES
-)
+INTENTS = (hikari.Intents.ALL_PRIVILEGED | hikari.Intents.DM_MESSAGES | hikari.Intents.GUILD_MESSAGES)
+
+bot = crescent.Bot(token=DISCORD_TOKEN, intents=INTENTS) #type: ignore[assignmnent]
 
 start = crescent.Group("start")
 queries = crescent.Group("queries")
 end = crescent.Group("end")
-
-bot = crescent.Bot(token=DISCORD_TOKEN, intents=INTENTS) #type: ignore
+delete = crescent.Group("delete")
 
 
 @bot.include
@@ -60,12 +57,15 @@ async def on_message(event: hikari.MessageCreateEvent) -> None:
         logger.info(event)
 
 
+async def hook_timesheet_query(ctx: crescent.Context) -> None:
+    await ctx.respond("Started query for weekly timesheet hours..")
+
+
 @bot.include 
 @tasks.cronjob('0 9 * * 0')
 async def start_query_timesheet() -> None:
-    notification = AsyncDiscordWebhook(
-        url=WEBHOOK_NOTION_INTEGRATION, 
-        content='Started query for weekly timesheet hours..')
+    notification = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
+                                       content='Started query for weekly timesheet hours..')
     await notification.execute()
     # Query must run after await to avoid timeout. Est. time: 19.xx seconds.
     weekly_totals(time_entries=entry_list(db=TIMETRACK_DB))
@@ -79,7 +79,6 @@ async def retrieve_query_timesheet() -> None:
                                        content=f"querying..")
     while TOTALS.empty:
         await query_status.execute()
-        await asyncio.sleep(7)
 
     content = f"""----------------------------------
     > **__Your weekly timesheet:__**\n```{TOTALS}```
@@ -97,19 +96,24 @@ ACTIVE_TIMER_ID: str
 @crescent.command(name='timer', description='Start new preset timer.')
 async def start_timer(
     ctx: crescent.Context,
-    category: typing.Annotated[str, crescent.Choices(
-            hikari.CommandChoice(name="CLIENT 1", value="CLIENT 1"),
-            hikari.CommandChoice(name="CLIENT 2", value="CLIENT 2"),
-            hikari.CommandChoice(name="CLIENT 3", value="CLIENT 3"),
-            hikari.CommandChoice(name="CLIENT 4", value="CLIENT 4"),
-            hikari.CommandChoice(name="CLIENT 5", value="CLIENT 5"),
-            hikari.CommandChoice(name="CLIENT 6", value="CLIENT 6"),
-            hikari.CommandChoice(name="CLIENT 7", value="CLIENT 7"),
+    category: typing.Annotated[
+        str,
+        crescent.Choices(
+            hikari.CommandChoice(name="UBF", value="UBF"),
+            hikari.CommandChoice(name="LON", value="LON"),
+            hikari.CommandChoice(name="SOF", value="SOF"),
+            hikari.CommandChoice(name="PFG", value="PFG"),
+            hikari.CommandChoice(name="DBC", value="DBC"),
+            hikari.CommandChoice(name="FWC", value="FWC"),
+            hikari.CommandChoice(name="UBC", value="UBC"),
+            hikari.CommandChoice(name="GAR", value="GAR"),
+            hikari.CommandChoice(name="RYM", value="RYM"),
             hikari.CommandChoice(name="Product Development", value="Product Development"),
+            hikari.CommandChoice(name="Training", value="Training"),
         ),
     ],
 ) -> None:
-    new_page = notion.Page.blank(parent_instance=TIMETRACK_DB, content=category)
+    new_page = notion.Page.create(TIMETRACK_DB, page_title=category)
     
     global ACTIVE_TIMER_ID
     ACTIVE_TIMER_ID = new_page.id
@@ -117,10 +121,10 @@ async def start_timer(
     content = f"""
     Page created in `notion.Database('{new_page.parent_id}')`.\nnew_page = `notion.Page('{new_page.id}')`.
     """
-    notification = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
+    hook = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
                                content=content, rate_limit_retry=True, timeout=10)
-    await notification.execute()
     await ctx.respond(f'Timer started for `{category}`.', ephemeral=True, flags=16) 
+    await hook.execute()
 
 
 @bot.include
@@ -130,7 +134,7 @@ class start_custom:
     description = crescent.option(str, description='Page title')
 
     async def callback(self, ctx: crescent.Context) -> None:
-        new_page = notion.Page.blank(parent_instance=TIMETRACK_DB, content=self.description)
+        new_page = notion.Page.create(TIMETRACK_DB, page_title=self.description)
 
         global ACTIVE_TIMER_ID
         ACTIVE_TIMER_ID = new_page.id
@@ -138,26 +142,26 @@ class start_custom:
         content = f"""
         Page created in `notion.Database('{new_page.parent_id}')`.\nnew_page = `notion.Page('{new_page.id}')`.
         """
-        notification = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
+        hook = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
                                    content=content, rate_limit_retry=True, timeout=10)
-        await notification.execute()
         await ctx.respond(f'Timer started for `{self.description}`.', ephemeral=True, flags=16) 
+        await hook.execute()
 
 
 @bot.include
 @queries.child
 @crescent.command(name='active', description='Query for any active timers.')
 async def query_active(ctx: crescent.Context) -> None:
-    query_payload = notion.payload(
+    query_payload = notion.request_json(
         query.PropertyFilter.checkbox('active', 'equals', True))
-    results = TIMETRACK_DB.query(data=query_payload).get('results')
+    results = TIMETRACK_DB.query(payload=query_payload).get('results')
 
-    if results == []:
+    if results is None:
         await ctx.respond('No active timers found.')
 
     for obj in results:
-        id =  obj['id'].replace('-','')
         name = obj['properties']['name']['title'][0]['plain_text']
+        id =  obj['id'].replace('-','')
         timer = obj['properties']['timer']['formula']['number']
         
         content = f"""
@@ -176,10 +180,8 @@ async def end_active(ctx: crescent.Context) -> None:
         content = f"""
         `notion.Page('{active_page.id}')` in `notion.Database('{active_page.parent_id}')` updated.\nSet property item `end` to `True`.
         """
-        notification = AsyncDiscordWebhook(
-                url=WEBHOOK_NOTION_INTEGRATION, 
-                content=content, rate_limit_retry=True, timeout=10)
-        
+        notification = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
+                                           content=content, rate_limit_retry=True, timeout=10)
         await ctx.respond(f'Timer Ended.', ephemeral=True, flags=16) 
         await notification.execute()
     except NameError:
@@ -205,12 +207,36 @@ class end_id:
         await notification.execute()
 
 
+@bot.include
+@delete.child
+@crescent.command(name='page_id', description='Delete the page associated with the input UUID.')
+class delete_page_id:
+    uuid = crescent.option(str, description='page id')
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        page_as_block = notion.Block(self.uuid).delete_self
+
+        content = f"""Deleted `notion.Page('{self.uuid}')`."""
+        hook = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
+                                   content=content, rate_limit_retry=True, timeout=10)
+        await ctx.respond(f'Done!', ephemeral=True, flags=16) 
+        await hook.execute()
+
+
+@bot.listen()
+async def test_listen(event: hikari.MessageCreateEvent) -> None:
+    if not event.is_human:
+        return
+    if event.content == "--status":
+        await event.message.respond("https://discordstatus.com/")
+
+
 if __name__ == "__main__":
     bot.run(
         activity=hikari.Activity(
-        name=":RUNNING ON GCP:",
+        name=":ON AYVI PC:",
         type=hikari.ActivityType.PLAYING),
-        asyncio_debug=True,             
-        coroutine_tracking_depth=20,
-        propagate_interrupts=True,
     )
+
+# run with optimizations
+# python -OO bot.py

@@ -1,90 +1,52 @@
-from typing import Sequence, Union
+from __future__ import annotations
+import typing
 
-from notion.query.propertyfilter import PropertyFilter
+from notion.core import build
+from notion.query.conditions import *
+from notion.query.propfilter import PropertyFilter
+from notion.query.filterproto import FilterTypeObject
 
-__all__: Sequence[str] = (
-    'CompoundFilter', 
-    'CompoundAnd', 
-    'CompoundOr'
-)
+__all__: typing.Sequence[str] = ('CompoundFilter', 'AndOperator', 'OrOperator')
 
-PropertyFilters = Union[PropertyFilter, Sequence[PropertyFilter]]
+_PropertyFilter = typing.Union[PropertyFilter, typing.Sequence[PropertyFilter]]
 
 
-class CompoundAnd:
-    """See doc in module `query.compound_filter_objects` and `CompoundFilter()`"""
-    def __new__(cls, *filters: PropertyFilters) -> dict[str, list[PropertyFilters]]:
-        return {'and': [f for f in filters]}
-
-class CompoundOr:
-    """See doc in module `query.compound_filter_objects` and `CompoundFilter()`"""
-    def __new__(cls, *filters: PropertyFilters) -> dict[str, list[PropertyFilters]]:
-        return {'or': [f for f in filters]}
-
-class CompoundFilter:
+class CompoundFilter(build.NotionObject, FilterTypeObject):
     """
-    :param operator: :class:`CompoundAnd` or :class:`CompoundOr` 
+    :param operator: :class:`AndOperator` or :class:`OrOperator` 
                      array of PropertyFilter objects or CompoundFilter objects.
                      Returns pages when any of the filters inside the provided array match.
-
+    ---
     Combines several filter objects together using a logical operator `and` or `or`.  
     Can also be combined within a compound filter, 
     NOTE: only up to two nesting levels deep.
 
-    See doc in module `query.compound_filter_objects` for an example.
-    
+    ---
     https://developers.notion.com/reference/post-database-query-filter#compound-filter-object
     """
-    def __new__(cls, *operator: CompoundOr | CompoundAnd) -> dict[str, CompoundOr | CompoundAnd]:
-        return {'filter': f for f in operator}
+    __slots__: typing.Sequence[str] = ('_all')
+
+    def __init__(self, *operators: AndOperator | OrOperator) -> None:
+        super().__init__()
+
+        self._all: dict = {}
+        for x in operators:
+            if isinstance(x, build.NotionObject) or isinstance(x, dict):
+                self._all.update(x)
+        
+        self.set('filter', self._all)
+
+class AndOperator(build.NotionObject, FilterTypeObject):
+    __slots__: typing.Sequence[str] = ()
+
+    def __init__(self, *filters: FilterTypeObject) -> None:
+        super().__init__()
+        self.set('and', [x for x in filters])
 
 
-__doc__ = \
-"""
-query_payload = payload(
-    CompoundFilter(
-        CompoundOr(
-            PropertyFilter.text(
-                'Description', 'email', 'contains', 'fish').compound(), 
-        CompoundAnd(
-            PropertyFilter.select(
-                'Food group', 'equals', 'Vegetable').compound(), 
-            PropertyFilter.checkbox(
-                'Is protein rich?', 'equals', True).compound()
-                )
-            )
-        )
-    )
+class OrOperator(build.NotionObject, FilterTypeObject):
+    __slots__: typing.Sequence[str] = ()
 
-
-```json
-{
-    "filter": {
-        "or": [
-            {
-                "property": "Description",
-                "email": {
-                    "contains": "fish"
-                }
-            },
-            {
-                "and": [
-                    {
-                        "property": "Food group",
-                        "select": {
-                            "equals": "Vegetable"
-                        }
-                    },
-                    {
-                        "property": "Is protein rich?",
-                        "checkbox": {
-                            "equals": true
-                        }
-                    }
-                ]
-            }
-        ]
-    }
-}
-```
-"""
+    def __init__(self, *filters: FilterTypeObject) -> None:
+        super().__init__()
+        self.set('or', [x for x in filters])

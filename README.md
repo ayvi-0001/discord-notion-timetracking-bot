@@ -96,7 +96,7 @@ async def start_timer(
         ),
     ],
 ) -> None:
-    new_page = notion.Page.blank(parent_instance=TIMETRACK_DB, content=category)
+    new_page = notion.Page.create(TIMETRACK_DB, page_title=category)
     
     global ACTIVE_TIMER_ID
     ACTIVE_TIMER_ID = new_page.id
@@ -107,7 +107,7 @@ async def start_timer(
     Page created in `notion.Database('{new_page.parent_id}')`.\nnew_page = `notion.Page('{new_page.id}')`.
     """
     notification = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
-                               content=content, rate_limit_retry=True, timeout=10)
+                                       content=content, rate_limit_retry=True, timeout=10)
     await notification.execute()
     await ctx.respond(f'Timer started for `{category}`.', ephemeral=True, flags=16) 
 ```
@@ -127,28 +127,29 @@ The main pain point I was planning to eliminate was totaling up the hours so tha
 The cron job is set to run every Sunday. On that day, the query is built using `datetime.timedelta` so I can iterate through the last 7 days in request filter parameters.
 
 ```py
-def construct_query(client: str, delta: int) -> dict[str, query.CompoundOr | query.CompoundAnd]:
+def construct_query(client: str, delta: int) -> query.CompoundFilter:
+    # function will run a cron job on discord bot each Sunday. Delta will iterate through week.
     dt_delta: str = (datetime.now() - timedelta(days=delta)).strftime("%Y-%m-%d")
     query_payload = query.CompoundFilter(
-        query.CompoundAnd(
+        query.AndOperator(
             query.PropertyFilter.date(
-                'dt_created', 'date', 'equals', dt_delta).compound,
+                'dt_created', 'date', 'equals', dt_delta, compound=True),
             query.PropertyFilter.text(
-                'name', 'rich_text', 'contains', client.upper()).compound,
+                'name', 'rich_text', 'contains', client.upper(), compound=True)
             )
         )
     return query_payload
 
 def get_hours(db: notion.Database, client: str, delta: int) -> _ArrayNumber_co | None:
-    filters: str = notion.payload(construct_query(client, delta))
-    response: dict = db.query(filters).get('results')
+    filters = notion.request_json(construct_query(client, delta))
+    response = db.query(filters).get('results')
     try:
         return weekly_hours_array(response)
     except KeyError:
         logger.debug(KeyError, "No results in Query")
         return None
 
-def weekly_hours_array(query_response: dict) -> _ArrayNumber_co:
+def weekly_hours_array(query_response) -> _ArrayNumber_co:
     total = np.sum(np.append(np.array([]), 
                 [x['properties']['timer']['formula']['number'] for x in query_response])
             )

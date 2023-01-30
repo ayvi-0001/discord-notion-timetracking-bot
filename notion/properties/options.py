@@ -7,7 +7,7 @@ __all__: Sequence[str] = (
     "FunctionsEnum",
     "NumberEnum",
     "PropertyColors"
-)
+    )
 
 
 class CodeEnum(str, Enum):

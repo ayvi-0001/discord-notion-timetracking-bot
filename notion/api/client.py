@@ -1,35 +1,35 @@
+from __future__ import annotations
 import os
-from typing import Sequence, Optional, Any
+from typing import Sequence
+from typing import Literal
+from typing import TypeAlias
 
 import json
 import requests
-from pydantic import Field
-from requests.models import Response
-from pydantic.dataclasses import dataclass
 
 from notion.core import *
-from notion.properties import *
+from notion.exceptions import *
 from notion.api._about import *
+from notion.core.typedefs import *
 
 __all__: Sequence[str] = ["_NotionClient"]
 
 
 class _NotionClient:
     """Base Class to inherit: token, headers, requests, and endpoints."""
-    def __init__(self, token: Optional[str] = None, notion_version: Optional[str] = None):
+    def __init__(self, /, *, token: str | None = None, notion_version: str | None = None):
         if token is not None:
             self.token = token
         else:
             try:
-                self.token = os.getenv('NOTION_TOKEN') #type: ignore
+                self.token = os.getenv('NOTION_TOKEN') #type: ignore[assignment]
             except NameError: 
                 pass
             finally:
                 if self.token is None:
                     assert token is not None, (
-                    f"<{__class__.__name__}> Missing Token",
-                    "Check if dotenv is configured and token is named 'NOTION_TOKEN'"
-                    )
+                f"<{self.__class__.__name__}> Missing Token",
+                "Check if dotenv is configured and token is named 'NOTION_TOKEN'")
             
         self.headers: dict[str, str] = {
             "Authorization": f'Bearer {self.token}',
@@ -41,75 +41,61 @@ class _NotionClient:
             self.headers['Notion-Version'] = notion_version
         
 
+    NotionEndpoint: TypeAlias = str
     @staticmethod
-    def _endpoint(
-        type: notion_endpoints, 
-        object_id: Optional[str] = None, 
-        children: bool = False, 
-        query: bool = False, 
-        properties: bool = False,
-        property_id: str | None = None
-    ) -> str:
+    def _endpoint(type: Literal['blocks', 'databases', 'pages'], /, 
+                  *,
+                  object_id: str | None = None, 
+                  children: bool = False, 
+                  properties: bool = False,
+                  property_id: str | None = None,
+                  query: bool = False
+        ) -> NotionEndpoint:
 
-        base = __base_url__
-        obj_id = f'/{object_id}'if object_id is not None else '' 
-        child = f'/children'if children is True else ''
-        props = f'/properties'if properties is True else ''
-        prop_id = f'/{property_id}' if property_id is not None else ''
-        qry = f'/query'if query is True else ''
+        object_id_ = '' if object_id is None else f'/{object_id}'
+        children_ = '' if children is False else '/children'
+        properties_ = '' if properties is False else '/properties'
+        property_id_ = '' if property_id is None else f'/{property_id}'
+        query_ = '' if query is False else '/query'
         
-        return f'{base}{type}{obj_id}{child}{props}{prop_id}{qry}'
+        return f"{__base_url__}{type}{object_id_}{children_}{properties_}{property_id_}{query_}"
 
-
-    @staticmethod
-    def get_cursor(response: Response) -> dict | Any:
-        _response = json.loads(response.text)
-
-        @dataclass(frozen=True)
-        class DatabaseQuery:
-            result: dict[str, str] = Field(default_factory=dict) 
-            next_cursor: dict[str, str] = Field(default_factory=dict) 
-        
-        if _response.get('has_more') is True:
-            _next_cursor = _asdict(Cursor(_response.get('next_cursor')))
-            return DatabaseQuery(result = _response, next_cursor = _next_cursor)
+    def _get(self, url: NotionEndpoint, /, 
+             *, payload: JSONObject | JSONPayload | None = None) -> JSONObject:
+        if payload is None:
+            response = requests.get(url, headers=self.headers)
         else:
-            logging.info('No more pages in query, cursor was set to None')
-            return DatabaseQuery(result = _response)
-    
+            if isinstance(payload, dict):
+                payload = json.dumps(payload)
+            response = requests.post(url, headers=self.headers, json=payload)
 
-    def _get(self, url: str, data: Optional[Json[str]] = None, cursor: bool = False) -> Any:
-        if data is None:
-            r = requests.get(url=url, headers=self.headers)
-            if cursor is True:
-                return self.get_cursor(r)
+        content = json.loads(response.text)
+        validate_response(content)
+        return content
+
+    def _post(self, url: NotionEndpoint, /, 
+              *, payload: JSONObject | JSONPayload | None = None) -> JSONObject:
+        if payload is None:
+            response = requests.post(url, headers=self.headers)
         else:
-            data=json.dumps(data) if isinstance(data, dict) else data
-            r = requests.post(url=url, headers=self.headers, data=data)
-            if cursor is True:
-                return self.get_cursor(r)
-        return json.loads(r.text)
+            if isinstance(payload, dict):
+                payload = json.dumps(payload)
+            response = requests.post(url, headers=self.headers, data=payload)
+        content = json.loads(response.text)
+        validate_response(content)
+        return content
 
+    def _patch(self, url: NotionEndpoint, /, 
+               *, payload: JSONObject | JSONPayload) -> JSONObject:
+        if isinstance(payload, dict):
+            payload = json.dumps(payload)
+        response = requests.patch(url, headers=self.headers, data=payload)
+        content = json.loads(response.text)
+        validate_response(content)
+        return content
 
-    def _patch(self, url: str, data) -> Any:
-        data=json.dumps(data) if isinstance(data, dict) else data
-        r = requests.patch(url=url, headers=self.headers, data=data)
-        return json.loads(r.text)
-
-
-    def _delete(self, url: str) -> Any:
-        r = requests.delete(url=url, headers=self.headers)
-        return json.loads(r.text)
-
-
-    def _post(self, url: str, data: Optional[Json[str]] = None, cursor: bool = False) -> Any:
-        if data is None:
-            r = requests.post(url=url, headers=self.headers)
-            if cursor is True and json.loads(r.text).get('has_more') is True:
-                return self.get_cursor(r)
-        else:
-            data=json.dumps(data) if isinstance(data, dict) else data
-            r = requests.post(url=url, headers=self.headers, data=data)
-            if cursor is True: 
-                return self.get_cursor(r)
-        return json.loads(r.text)
+    def _delete(self, url: NotionEndpoint, /) -> JSONObject:
+        response = requests.delete(url, headers=self.headers)
+        content = json.loads(response.text)
+        validate_response(content)
+        return content

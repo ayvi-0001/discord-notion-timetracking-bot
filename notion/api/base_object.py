@@ -1,19 +1,22 @@
 from __future__ import annotations
 
-import typing
 from functools import cached_property
+from typing import Sequence
+from typing import Optional
 from datetime import datetime
+from datetime import tzinfo
 
-from pytz import timezone
+from uuid import UUID
+from pytz import timezone # type: ignore[import]
+# Occasional issues with downloading library stubs for pytz
 from pydantic.dataclasses import dataclass
 
-from notion.core import *
-from notion.properties import *
-from notion.api.client import _NotionClient
+from notion.api._about import *
+from notion.api.client import *
+from notion.exceptions import *
+from notion.core.typedefs import *
 
-__all__: typing.Sequence[str] = ["_BaseNotionBlock"]
-
-DEFAULT_TIMEZONE = 'PST8PDT'
+__all__: Sequence[str] = ["_BaseNotionBlock"]
 
 
 class _BaseNotionBlock(_NotionClient):
@@ -26,59 +29,65 @@ class _BaseNotionBlock(_NotionClient):
     objects at the workspace level, and require a parent id.
     Subclasses use this for validation.
     """
-    def __init__(
-        self, id: str, token: str | None = None, notion_version: str | None = None
-    ):
+    def __init__(self, id: str, /, *, token: str | None = None, notion_version: str | None = None):
         super().__init__(token=token, notion_version=notion_version)
 
-        self.id = str(id).replace('-','')
-        self.default_tz = DEFAULT_TIMEZONE
+        self.default_tz = __default_timezone__
+        self.id = id.replace('-','')
+        try:
+            UUID(self.id)
+        except ValueError:
+            __failed_instance__ = f"""
+            {self.__repr__()} instatiation failed validation:
+            id should be a valid uuid, instead was `'{self.id}'`
+            """
+            raise NotionObjectNotFound(__failed_instance__)
+
 
     @cached_property
-    def block_obj(self) -> typing.Any:
-        """Returns the Block, Page, or Database from the 'retrieve blocks endpoint'."""
+    def block_endpoint(self) -> JSONObject:
+        """Returns the object 'Block' for the Block, Page, or Database."""
         url = super()._endpoint('blocks', object_id=self.id)
         return super()._get(url)
     
     @property
-    def type(self) -> str:
-        return self.block_obj['type']
+    def type(self) -> JSONObject:
+        return self.block_endpoint['type']
     
     @property
-    def object(self) -> str:
-        return self.block_obj['object']
+    def object(self) -> JSONObject:
+        return self.block_endpoint['object']
 
     @property
-    def has_children(self) -> bool:
-        return self.block_obj['has_children']
+    def has_children(self) -> JSONObject:
+        return self.block_endpoint['has_children']
 
     @property
-    def is_archived(self) -> bool:
-        return self.block_obj['archived']
+    def is_archived(self) -> JSONObject:
+        return self.block_endpoint['archived']
     
     @property
-    def parent_type(self) -> bool:
-        return self.block_obj['parent'].get('type')
+    def parent_type(self) -> JSONObject:
+        response = self.block_endpoint['parent'].get('type')
+        return response
 
     @property
-    def parent_id(self) -> typing.Any:
-        _parent_id = self.block_obj['parent'].get(self.parent_type)
-        # return 'workspace' rather than returning True
-        # e.g. workspace {"parent":{"type":"workspace","workspace":true}}
+    def parent_id(self) -> JSONObject:
+        _parent_id = self.block_endpoint['parent'].get(self.parent_type)
         if _parent_id is True:
-            _parent_id = self.parent_type
+            _parent_id = self.parent_type # set key to 'workspace' rather than 'True'
         else:
             _parent_id = _parent_id.replace('-','')
         return _parent_id
 
-    def set_default_tz(self, timez: pytz_timezone | str) -> None:
+    def set_default_tz(self, timezone: Optional[tzinfo | str]):
         """ 
-        Required:
+        (required)
         :param timez: set default timezone. class default = 'PST8PDT'
                       Use pytz.all_timezones to retrieve list of tz options.
                       Pass either string or pytz.timezone(...)
         """
-        self.__setattr__('default_tz', timez)
+        self.__setattr__('default_tz', timezone)
 
     @property
     def last_edited(self):
@@ -90,19 +99,20 @@ class _BaseNotionBlock(_NotionClient):
         example_block.last_edited.date
         example_block.last_edited.time
         """
-        _last_edit = self.block_obj.get('last_edited_time')
+        _last_edited_time = self.block_endpoint.get('last_edited_time')
+        assert _last_edited_time is not None 
         _dt = datetime.fromisoformat(
-            _last_edit).astimezone(tz=timezone(self.default_tz)) 
+            _last_edited_time).astimezone(tz=timezone(self.default_tz)) 
 
         @dataclass(frozen=True)
-        class LastEdit:
+        class LastEditedTime:
             date = _dt.strftime("%m/%d/%Y")
             day = _dt.strftime("%d")
             month = _dt.strftime("%m")
             year = _dt.strftime("%Y")
             time = _dt.strftime("%H:%M:%S")
 
-        return LastEdit()
+        return LastEditedTime()
 
     @property
     def created(self):
@@ -114,7 +124,8 @@ class _BaseNotionBlock(_NotionClient):
         example_block.created.date
         example_block.created.time
         """
-        _created_time = self.block_obj.get('created_time')
+        _created_time = self.block_endpoint.get('created_time')
+        assert _created_time is not None 
         _dt = datetime.fromisoformat(
             _created_time).astimezone(tz=timezone(self.default_tz)) 
 
@@ -129,4 +140,4 @@ class _BaseNotionBlock(_NotionClient):
         return CreatedTime()
 
     def __repr__(self):
-        return f'{self.__class__.__name__.lower()}_{self.id}'
+        return f'<{self.__class__.__name__.lower()}_{self.id}>'
