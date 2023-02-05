@@ -24,7 +24,7 @@ __all__: typing.Sequence[str] = (
 class RichText(build.NotionObject):
     __slots__: typing.Sequence[str] = ('_text')
 
-    def __init__(self, content: str, /, *, link: str | None = None, 
+    def __init__(self, content: str | None = None, /, *, link: str | None = None, 
                  annotations: Annotations | None = None) -> None:
         super().__init__()
 
@@ -125,20 +125,21 @@ class Annotations(build.NotionObject):
     __slots__: typing.Sequence[str] = ()
 
     def __init__(self,
-                 bold: bool | None = False,
-                 italic: bool | None = False,
-                 strike: bool | None = False,
-                 underline: bool | None = False,
-                 code: bool | None = False,
+                 bold: bool | None = None,
+                 italic: bool | None = None,
+                 strike: bool | None = None,
+                 underline: bool | None = None,
+                 code: bool | None = None,
                  color: ColorEnum | None = None ) -> None:
         super().__init__()
 
-        if any([bold, italic, strike, underline, code, color]):
-            self.set('bold', bold)
-            self.set('italic', italic)
-            self.set('strike', strike)
-            self.set('underline', underline)
-            self.set('code', code)
-            self.set('color', color)
-        else:
+        self.set('bold', bold) if bold else None
+        self.set('italic', italic) if italic else None
+        self.set('strike', strike) if strike else None
+        self.set('underline', underline) if underline else None
+        self.set('color', color) if color else None
+        self.set('color', ColorEnum.default) if not color else None
+        self.set('code', code) if code else None
+        
+        if not any([[bold, italic, strike, underline, code, color]]):
             pass
