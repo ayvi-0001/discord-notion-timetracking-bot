@@ -91,7 +91,7 @@ New entries can be added at any time, but there is a table in Notion that's used
 
 <img src="doc/options_table.png" >
 
-These can be added either through Notion UI, or in Discord with `/options add` and `options/delete`.
+These can be added either through Notion UI, or in Discord with `/options add` and `/options delete`.
 
 This column gets queried when using the `/start timer` command in Discord to autocomplete the available options.
 
@@ -152,8 +152,7 @@ class start_timer:
 
 <p float="middle">
   <img src="doc/options.png">  
-  <img src="doc/start_timer.png" width="40%">  
-  <img src="doc/response_new_properties.png" width="40%">  
+  <img src="doc/start_timer.png">  
 </p>
 <br></br>
 
@@ -216,7 +215,7 @@ class EndTimer:
 <img src="doc/end_active_list.png">  
 
 This can be used both to end, or view what is running.  
-Entries can be deleted using the page's uuid and the command `/delete id`.  
+Entries can also be deleted using the page's uuid and the command `/delete id`.  
 
 ---
 
@@ -241,7 +240,7 @@ and one to call an embed with links to this repo/notion-api repo, with a timesta
 </p>
 
 
-3 text commands also exist for links to quickly view a few pages I regularly checked while creating this bot and the wrapper.  
+3 text commands also exist for links to quickly view a few pages that I regularly checked while creating this bot and the wrapper.  
 `--status` for url to Discord uptime status page.  
 `--notionupdates` for url to latest feature releases in Notion.  
 `--notionchangelog` for url to latest changes to Notion's API.  
