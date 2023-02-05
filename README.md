@@ -1,234 +1,251 @@
-First version of my timetracking discord bot.  
-The discord bot is built with crescent/hikari (which I am still very much trying to figuring out how to use correctly), while the requests to Notion's api are done with a wrapper that I'm also working on.  
+# Discord/Notion Timetracking Bot
 
-The wrapper itself is uploaded separately, but it's not yet a package (nor complete), so I need to keep a copy with the bot for now.  
+Current version of my timetracking discord bot, using another side-project building a wrapper for Notion's API.  
+The wrapper itself is uploaded to a separate repo, but it's not yet a package or complete, so a copy is kept locally here as well.
+
+The bot is built with crescent/hikari, and hosted on a VM in GCP.  
 
 ---
-### Packages/Modules/Custom Scripts Used
+### Packages/Modules Used
 ```py
 import os
-import time
 import dotenv
-import typing
 import asyncio
 import logging
-from functools import reduce
-from operator import getitem
-from datetime import datetime 
-from datetime import timedelta 
+from datetime import datetime
 
+import hikari
+import miru
 import crescent
 from crescent.ext import tasks
-import hikari
 from discord_webhook import AsyncDiscordWebhook
-import numpy as np
-import pandas as pd
+from discord_webhook import DiscordEmbed
 
-import notion # custom wrapper.
-import notion.query as query # ext. to above.
-from timesheet import * # script for totalling weekly hours.
+from github import Github
+from jsonpath_ng import parse
+
+import notion
+import notion.properties as prop
+import notion.query as query
 ```
 
 ---
 ## Logic for Tracking Hours
 
-The actual logging of hours can be done entirely on Notion. I chose to keep the logic for tracking time there because the bot is being worked on and still missing features, like overriding entries. It also isn't running 24/7 until I leave it hosted on a virtual machine. Considering I use this to track my work hours, I didn't want to have downtime.
+Logging time can be done entirely on Notion. While the bot is hosted on persistant server, I chose to keep the logic for calculating hours there in the event of downtime, and the bot is still missing a few key features. Overriding start/end times and viewing a paginated list of recent entries still needs to be implemented.
 
 The view in Notion:
 
-<img src="img/view_db.png" >  
+<img src="doc/view_db.png" >  
 <br></br>
 
-The basic idea is;
+- The 'timer' starts when a page is created, using the `created_time` property as start time.
+- Toggling `end`, will stop the timer and calculates total duration using the `last_edit` property as end time.
 
-- The timer starts when a page is created through `created_time` property.
-- Once you toggle the `end` checkbox, it calculates the time until the `last_edit` property.
-- Unfortunately this means that if the page was edited at a later time, then it would extend the timer until the latest edit, so
+Unfortunately this means that if the page was edited at a later time, then it would extend the timer until the latest edit, so additional properties to override start/end times are added.
 
-<img src="img/override.png" >  
+<img src="doc/override2.png" >  
 
-- I needed properties to override the start and end times incase any edits needed to be made, or entries had to be added after the fact.
+Notion's formulas for datetime don't play nice with actual datetime properties/objects or any mathmatical operations, so everything had to be converted to a timestamp.  
+All the logic in the end - for calcuating duration, allowing overrides, error handling, converting timestamps to hours, and rounding - ends with this.
 
-- Notion's formulas for datetime don't play nice with actual datetime properties/objects or any mathmatical operations, so everything had to be converted to a timestamp. All the logic in the end - for calcuating time based on toggling the `end` checkbox, allowing overrides, adding blank values for errors, converting to hours, and rounding - ended up with this..
+<img src="doc/explainable_formula.png" >  
 
-<img src="img/explainable_formula.png" >  
-
-Now, I decided to try and let Notion's new AI explain this for me.
-<br></br>
+I decided to try and let Notion's new AI explain this for me.
 
 <p float="middle">
-  <img src="img/explain_this.png" width="45%">  
-  <img src="img/explained.png" width="45%">  
+  <img src="doc/explain_this.png" width="45%">  
+  <img src="doc/explained.png" width="45%">  
 </p>
 
 
-Honestly, not terribly disappointed.
-
-I'll still add to that though - yes this was broken down into separate properties and was nowhere near this messy, but it added ~15 columns and was already running slow with a lot of entries, so I combined them into one. I have the breakdown. Somewhere.
+Honestly, not terribly disappointed. This was originally broken down into separate properties, but all the additional columns caused the UI to slow down so I combined them into one. I have the breakdown. Somewhere.
 
 ---
 ## Discord Commands
 
-There are 3 general commands for now.
-- Create a page/time entry
-- Check if there are any active entries
-- End the current timer/by notion UUID
-
-The whole point of this project was to save the time I spend tracking time, so for the sake of time, I have a command with preset options. Although there is a separate command for custom entries, should the need arise.
+There are 3 databases in Notion used by the bot.
 
 ```py
-WEBHOOK_NOTION_INTEGRATION = os.getenv('WEBHOOK_NOTION_INTEGRATION')
+# individual time entries
+TIMETRACK_DB = notion.Database(os.getenv('TIMETRACK_DB_ID'))
+# table to sum all entries for each category
+ROLLUP_DB = notion.Database(os.getenv('ROLLUP_DB_ID'))
+# category names used for autocompleting dropdowns
+OPTIONS_DB = notion.Database(os.getenv('OPTIONS_DB_ID'))
+```
 
+Each morning at 04:00, the bot will create a daily page in the rollup database for time entries to relate to.
+
+```py
+@bot.include 
+@tasks.cronjob('0 4 * * *')
+async def create_daily_rollup_page() -> None:
+    new_rollup_page = notion.Page.create(ROLLUP_DB, page_title=f"{datetime.today().date()}")
+    new_rollup_page.set_date('time_created', datetime.today())
+```
+
+### Starting a New Timer
+
+New entries can be added at any time, but there is a table in Notion that's used to store common entry names.
+
+<img src="doc/options_table.png" >
+
+These can be added either through Notion UI, or in Discord with `/options add` and `options/delete`.
+
+This column gets queried when using the `/start timer` command in Discord to autocomplete the available options.
+
+```py
+async def autocomplete_options(
+    ctx: crescent.AutocompleteContext, option: hikari.AutocompleteInteractionOption
+) -> list[hikari.CommandChoice]:
+    r = OPTIONS_DB.query(filter_property_values=['lifetime_entries'])
+    # grabs plain_text key from name column in notion.
+    entries = [m.value for m in parse("$.results[*].properties..plain_text").find(r)]
+    list_options = [hikari.CommandChoice(name=e, value=e) for e in entries]
+    return list_options
+```
+
+The command will create a new page, and check to see if a rollup column has already been created or not.  
+If the input name is a new category, then it'll create the relation between the timesheet database and the rollup database
+that is used to calculate totals.
+
+```py
 @bot.include
 @start.child
-@crescent.command(name='timer', description='Start new preset timer.')
-async def start_timer(
-    ctx: crescent.Context,
-    category: typing.Annotated[str, crescent.Choices(
-            hikari.CommandChoice(name="CLIENT 1", value="CLIENT 1"),
-            hikari.CommandChoice(name="CLIENT 2", value="CLIENT 2"),
-            hikari.CommandChoice(name="CLIENT 3", value="CLIENT 3"),
-            hikari.CommandChoice(name="CLIENT 4", value="CLIENT 4"),
-            hikari.CommandChoice(name="CLIENT 5", value="CLIENT 5"),
-            hikari.CommandChoice(name="CLIENT 6", value="CLIENT 6"),
-            hikari.CommandChoice(name="CLIENT 7", value="CLIENT 7"),
-            hikari.CommandChoice(name="Product Development", value="Product Development"),
-        ),
-    ],
-) -> None:
-    new_page = notion.Page.create(TIMETRACK_DB, page_title=category)
-    
-    global ACTIVE_TIMER_ID
-    ACTIVE_TIMER_ID = new_page.id
-    # global method is TEMPORARY 
-    # still working out some issues with the query filters
+@crescent.command(name="timer", description="Start new preset timer.")
+class start_timer:
+    category = crescent.option(str, "Select a time entry", autocomplete=autocomplete_options)
 
-    content = f"""
-    Page created in `notion.Database('{new_page.parent_id}')`.\nnew_page = `notion.Page('{new_page.id}')`.
-    """
-    notification = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
-                                       content=content, rate_limit_retry=True, timeout=10)
-    await notification.execute()
-    await ctx.respond(f'Timer started for `{category}`.', ephemeral=True, flags=16) 
+    async def callback(self, ctx: crescent.Context) -> None:
+        await ctx.respond(f'Starting timer for {self.category}..', ephemeral=True, flags=16)
+
+        new_timer = notion.Page.create(TIMETRACK_DB, page_title=self.category)
+        
+        rollup_category = f"rollup_{self.category}"
+        timer_category = f"timer_{self.category}"
+        sum_category = f"sum_{self.category}"
+        
+        try:
+            # checks to see if a related column already exists.
+            TIMETRACK_DB.property_schema[rollup_category]
+        except KeyError:
+            # creates a new one if not found, and notifies the function may take longer.
+            await ctx.edit("Creating new rollup properties..")
+            # synced property name key has some bugs with notion api at time of commit,
+            TIMETRACK_DB.add_relation_column(ROLLUP_DB.id, ' ', property_name=rollup_category)
+            # so have to rename the synced property from default separately.
+            ROLLUP_DB.rename_property(f"Related to timetrack_db (rollup_{self.category})", timer_category)
+            ROLLUP_DB.add_rollup_column(timer_category, 'timer', prop.FunctionsEnum.sum, property_name=sum_category)
+
+        # query's rollup table for today's date to get id for related column.
+        params = query.PropertyFilter.text('name', 'title', 'equals', f"{datetime.today().date()}")
+        result = ROLLUP_DB.query(payload=params, filter_property_values=['name'])
+        related_id = [match.value for match in parse("$.results[*].id").find(result)]
+        new_timer.set_related(rollup_category, related_id)
+
+        _content_page = f"New page created in `notion.Database('{new_timer.parent_id}')`"
+        _content_id = f"New page ID: `{new_timer.id}`."
+        content = f"{ctx.user.mention}\n{_content_page}\n{_content_id}"
+        await ctx.followup(content) 
 ```
-
 
 <p float="middle">
-  <img src="img/options.png">  
-  <img src="img/start_timer.png" width="50%">  
+  <img src="doc/options.png">  
+  <img src="doc/start_timer.png" width="40%">  
+  <img src="doc/response_new_properties.png" width="40%">  
 </p>
-
-Ending and querying follow the same general idea. Examples can be seen in images or source.   
+<br></br>
 
 ---
-## Totalling Hours and Weekly Timesheet
 
-The main pain point I was planning to eliminate was totaling up the hours so that I could quickly submit my timesheets each week.  
-The cron job is set to run every Sunday. On that day, the query is built using `datetime.timedelta` so I can iterate through the last 7 days in request filter parameters.
+### End & View Active Running Timers
+
+Same as the autocomplete function used when starting a timer - the `/end timer` command will first query an active timers, 
+and display the name and current duration.
 
 ```py
-def construct_query(client: str, delta: int) -> query.CompoundFilter:
-    # function will run a cron job on discord bot each Sunday. Delta will iterate through week.
-    dt_delta: str = (datetime.now() - timedelta(days=delta)).strftime("%Y-%m-%d")
-    query_payload = query.CompoundFilter(
-        query.AndOperator(
-            query.PropertyFilter.date(
-                'dt_created', 'date', 'equals', dt_delta, compound=True),
-            query.PropertyFilter.text(
-                'name', 'rich_text', 'contains', client.upper(), compound=True)
+async def autocomplete_active_timers(
+    ctx: crescent.AutocompleteContext, option: hikari.AutocompleteInteractionOption
+) -> list[hikari.CommandChoice]:
+    # query for active entries is limited to past week,
+    # and filters properties returned to help reduce time.
+    query_payload = notion.request_json(
+        query.CompoundFilter(
+            query.AndOperator(
+                query.PropertyFilter.checkbox('active', 'equals', True),
+                query.TimestampFilter.created_time('past_week', {}))),
+            query.SortFilter([query.EntryTimestampSort.created_time_descending()]
             )
         )
-    return query_payload
+    results = TIMETRACK_DB.query(payload=query_payload, 
+                                 filter_property_values=['name','id','timer']
+                                 ).get('results')
 
-def get_hours(db: notion.Database, client: str, delta: int) -> _ArrayNumber_co | None:
-    filters = notion.request_json(construct_query(client, delta))
-    response = db.query(filters).get('results')
-    try:
-        return weekly_hours_array(response)
-    except KeyError:
-        logger.debug(KeyError, "No results in Query")
-        return None
+    list_responses = []
+    if results:
+        for obj in results:
+            name = obj['properties']['name']['title'][0]['plain_text']
+            id = obj['id'].replace('-','')
+            timer = obj['properties']['timer']['formula']['number']
+            display_name = f"Name: {name} | Duration: {timer}"
+            list_responses.append(hikari.CommandChoice(name=display_name, value=id))
+        return list_responses
+    else:
+        return [hikari.CommandChoice(name='No active timers to display.', value='null')]
 
-def weekly_hours_array(query_response) -> _ArrayNumber_co:
-    total = np.sum(np.append(np.array([]), 
-                [x['properties']['timer']['formula']['number'] for x in query_response])
-            )
-    return total
+
+@bot.include
+@end.child
+@crescent.command(name="timer", description="End any active timers.")
+class EndTimer:
+    active_timer = crescent.option(str, "Select an option to stop.", 
+                                   autocomplete=autocomplete_active_timers)
+
+    async def callback(self, ctx: crescent.Context) -> None:
+        # without 'null' value, autocomplete search fails to load in discord.
+        if self.active_timer == 'null':
+            await ctx.respond(f"Nothing to stop!", ephemeral=True)
+        else:
+            await ctx.respond(f"Stopping timer...", ephemeral=True)
+            active_page = notion.Page(self.active_timer)
+            active_page.set_checkbox('end', True)
+            await ctx.followup(f"Timer ended!")
 ```
 
-I also want the columns with the different time entry names to be automatically populated so I don't need to manually add anything as new clients get added/dropped.
+<img src="doc/end_active_list.png">  
 
-```py
-def entry_list(db: notion.Database) -> set[str]:
-    list_results = [r for r in db.query().get('results')]
-    title_keys = ['properties', 'name', 'title']
-    n_array = [reduce(getitem, title_keys, obj) for obj in list_results]
-    n_iter = [array[1][0] for array in enumerate(n_array)]
-    unique_names = set([name.get("plain_text").upper() for name in n_iter])
-    return unique_names
-```
-
-The final function will add the last weeks hours, per day, for all unique time entry names.  
-
-```py
-TIMETRACK_DB_ID = os.getenv('TIMETRACK_DB_ID')
-TIMETRACK_DB = notion.Database(TIMETRACK_DB_ID)
-
-DAYS_OF_WEEK = ['Sat', 'Fri', 'Thu', 'Wed', 'Tue', 'Mon', 'Sun']
-
-TOTALS = pd.DataFrame(index=DAYS_OF_WEEK)
-
-def weekly_totals(time_entries) -> None:
-    for client in time_entries:
-        client_hours: list[_ArrayNumber_co | None] = []
-        for days in enumerate(DAYS_OF_WEEK):
-            client_hours.append(get_hours(db=TIMETRACK_DB, client=client, delta=days[0]))
-        TOTALS[client] = client_hours
-```
----
-## Scheduled Cron Jobs
-
-Returning the final dataframe had to be split up into 2 functions to avoid timeout issues.
-
-At the scheduled time, The query will run, with the actual function happening _after_ the await.
-
-The second function has the same cron schedule, as the smallest intervals I can set are by minutes. It begins at the same time and waits for the dateframe to populate.  
-
-```py
-@bot.include 
-@tasks.cronjob('0 9 * * 0')
-async def start_query_timesheet() -> None:
-    notification = AsyncDiscordWebhook(
-        url=WEBHOOK_NOTION_INTEGRATION, 
-        content='Started query for weekly timesheet hours..')
-    await notification.execute()
-    # Query must run after await to avoid timeout. Est. time: 19.xx seconds.
-    weekly_totals(time_entries=entry_list(db=TIMETRACK_DB))
- 
-
-@bot.include 
-@tasks.cronjob('0 9 * * 0')
-async def retrieve_query_timesheet() -> None:
-    TIME_START = time.time()
-    query_status = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
-                                       content=f"querying..")
-    while TOTALS.empty:
-        await query_status.execute()
-        await asyncio.sleep(7)
-
-    content = f"""----------------------------------
-    > **__Your weekly timesheet:__**\n```{TOTALS}```
-    **Query results:** _{round(time.time() - TIME_START, 3)}'s elapsed._
-    """
-    notification = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, content=content)
-    await notification.execute()
-```
-
-There are obvious issues with this current system, but until the bot is hosted on a persistant server, it'll do for now!
+This can be used both to end, or view what is running.  
+Entries can be deleted using the page's uuid and the command `/delete id`.  
 
 ---
-## Final result
 
-<img src="img/query_results.png">  
+## Total Hours and Rollup Table View
+
+The view in the rollup table is automatically filled as time entries get added. 
+
+<img src="doc/rollup_table.png">  
 
 I now save approx. 5 minutes at the end of each week adding up my hours!
+
+---
+### Additional and Planned Functions
+
+There are currently 2 user commands.  
+One to call link buttons to each database,
+and one to call an embed with links to this repo/notion-api repo, with a timestamp for when it was last updated. 
+
+<p float="middle">
+  <img src="doc/user_commands.png">  
+  <img src="doc/links_to_db.png" width="40%">  
+</p>
+
+
+3 text commands also exist for links to quickly view a few pages I regularly checked while creating this bot and the wrapper.  
+`--status` for url to Discord uptime status page.  
+`--notionupdates` for url to latest feature releases in Notion.  
+`--notionchangelog` for url to latest changes to Notion's API.  
+
+
+Features that still need to be included as mentioned at the beginning of this doc, are overrides and viewing entries in Discord.  
+And eventually I'd like to finish building the notion wrapper, and publish it on PyPI so I don't need to include the folder in here anymore.  
