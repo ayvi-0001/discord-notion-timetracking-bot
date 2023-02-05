@@ -1,242 +1,316 @@
 import os
 import dotenv
-import logging
-import typing
-import time
 import asyncio
+import logging
+from datetime import datetime
 
+import hikari
+import miru
 import crescent
 from crescent.ext import tasks
-import hikari
 from discord_webhook import AsyncDiscordWebhook
-from requests.exceptions import Timeout
+from discord_webhook import DiscordEmbed
+
+from github import Github
+from jsonpath_ng import parse
 
 import notion
+import notion.properties as prop
 import notion.query as query
-from timesheet import *
 
 dotenv.load_dotenv(dotenv_path=dotenv.find_dotenv())
 
-logger = logging.getLogger("ayvi-bot")
-logger.setLevel(logging.DEBUG)
+ayvi_bot_logger = logging.getLogger("ayvi-bot")
+ayvi_bot_logger.setLevel(logging.INFO)
 
-DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
-WEBHOOK_NOTION_INTEGRATION = os.getenv('WEBHOOK_NOTION_INTEGRATION')
+DISCORD_TOKEN = os.getenv('DISCORD_TOKEN', '')
+WEBHOOK_NOTION_INTEGRATION = os.getenv('WEBHOOK_NOTION_INTEGRATION', '')
+AYVIBOT_HELPER = os.getenv('AYVIBOT_HELPER', '')
 
-TIMETRACK_DB_ID = os.getenv('TIMETRACK_DB_ID')
-TIMETRACK_DB = notion.Database(TIMETRACK_DB_ID)
+TIMETRACK_DB = notion.Database(os.getenv('TIMETRACK_DB_ID', ''))
+ROLLUP_DB = notion.Database(os.getenv('ROLLUP_DB_ID', ''))
+OPTIONS_DB = notion.Database(os.getenv('OPTIONS_DB_ID', ''))
 
-INTENTS = (hikari.Intents.ALL_PRIVILEGED | hikari.Intents.DM_MESSAGES | hikari.Intents.GUILD_MESSAGES)
+INTENTS = hikari.Intents.ALL_PRIVILEGED | hikari.Intents.DM_MESSAGES | hikari.Intents.GUILD_MESSAGES
 
-bot = crescent.Bot(token=DISCORD_TOKEN, intents=INTENTS) #type: ignore[assignmnent]
+bot = crescent.Bot(token=DISCORD_TOKEN, intents=INTENTS)
 
 start = crescent.Group("start")
-queries = crescent.Group("queries")
 end = crescent.Group("end")
 delete = crescent.Group("delete")
+options = crescent.Group("options")
+check = crescent.Group("check")
+
+
+# ~~~~~ Runtime Operations ~~~~~
 
 
 @bot.include
 @crescent.event
 async def on_ready(event: hikari.StartedEvent) -> None:
-    logger.info(f"Bot Online. Latency: {round(bot.heartbeat_latency, 5)} ms")
-    logger.info(event)
-
+    content = f"ayvi-bot is online! heartbeat latency: {round(bot.heartbeat_latency, 5)} ms"
+    ready = AsyncDiscordWebhook(url=AYVIBOT_HELPER, content=content, 
+                                rate_limit_retry=True, timeout=10)
+    ayvi_bot_logger.info(event)
+    await ready.execute()
 
 @bot.include
 @crescent.event
 async def send_terminal_event(event: hikari.ShardReadyEvent) -> None:
-    logger.info(event)
+    ayvi_bot_logger.info(event)
 
 
-@bot.listen()
-async def on_message(event: hikari.MessageCreateEvent) -> None:
-    if event.is_bot or not event.content:
-        return
-    else:
-        logger.info(event)
-
-
-async def hook_timesheet_query(ctx: crescent.Context) -> None:
-    await ctx.respond("Started query for weekly timesheet hours..")
+# ~~~~~ Daily Operations ~~~~~
 
 
 @bot.include 
-@tasks.cronjob('0 9 * * 0')
-async def start_query_timesheet() -> None:
-    notification = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
-                                       content='Started query for weekly timesheet hours..')
-    await notification.execute()
-    # Query must run after await to avoid timeout. Est. time: 19.xx seconds.
-    weekly_totals(time_entries=entry_list(db=TIMETRACK_DB))
- 
-
-@bot.include 
-@tasks.cronjob('0 9 * * 0')
-async def retrieve_query_timesheet() -> None:
-    TIME_START = time.time()
-    query_status = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
-                                       content=f"querying..")
-    while TOTALS.empty:
-        await query_status.execute()
-
-    content = f"""----------------------------------
-    > **__Your weekly timesheet:__**\n```{TOTALS}```
-    **Query results:** _{round(time.time() - TIME_START, 3)}'s elapsed._
-    """
-    notification = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, content=content)
-    await notification.execute()
+@tasks.cronjob('0 4 * * *')
+async def create_daily_rollup_page() -> None:
+    # rollup page that time entries will relate to for totals.
+    new_rollup_page = notion.Page.create(ROLLUP_DB, page_title=f"{datetime.today().date()}")
+    new_rollup_page.set_date('time_created', datetime.today())
 
 
-ACTIVE_TIMER_ID: str
+# ~~~~~ Start Timer ~~~~~
+
+
+async def autocomplete_options(
+    ctx: crescent.AutocompleteContext, option: hikari.AutocompleteInteractionOption
+) -> list[hikari.CommandChoice]:
+    r = OPTIONS_DB.query(filter_property_values=['lifetime_entries'])
+    # grabs plain_text key from name column in notion.
+    entries = [m.value for m in parse("$.results[*].properties..plain_text").find(r)]
+    list_options = [hikari.CommandChoice(name=e, value=e) for e in entries]
+    return list_options
 
 
 @bot.include
 @start.child
-@crescent.command(name='timer', description='Start new preset timer.')
-async def start_timer(
-    ctx: crescent.Context,
-    category: typing.Annotated[
-        str,
-        crescent.Choices(
-            hikari.CommandChoice(name="UBF", value="UBF"),
-            hikari.CommandChoice(name="LON", value="LON"),
-            hikari.CommandChoice(name="SOF", value="SOF"),
-            hikari.CommandChoice(name="PFG", value="PFG"),
-            hikari.CommandChoice(name="DBC", value="DBC"),
-            hikari.CommandChoice(name="FWC", value="FWC"),
-            hikari.CommandChoice(name="UBC", value="UBC"),
-            hikari.CommandChoice(name="GAR", value="GAR"),
-            hikari.CommandChoice(name="RYM", value="RYM"),
-            hikari.CommandChoice(name="Product Development", value="Product Development"),
-            hikari.CommandChoice(name="Training", value="Training"),
-        ),
-    ],
-) -> None:
-    new_page = notion.Page.create(TIMETRACK_DB, page_title=category)
-    
-    global ACTIVE_TIMER_ID
-    ACTIVE_TIMER_ID = new_page.id
-
-    content = f"""
-    Page created in `notion.Database('{new_page.parent_id}')`.\nnew_page = `notion.Page('{new_page.id}')`.
-    """
-    hook = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
-                               content=content, rate_limit_retry=True, timeout=10)
-    await ctx.respond(f'Timer started for `{category}`.', ephemeral=True, flags=16) 
-    await hook.execute()
-
-
-@bot.include
-@start.child
-@crescent.command(name='custom', description='Start new custom timer.')
-class start_custom:
-    description = crescent.option(str, description='Page title')
+@crescent.command(name="timer", description="Start new preset timer.")
+class start_timer:
+    category = crescent.option(str, "Select a time entry", autocomplete=autocomplete_options)
 
     async def callback(self, ctx: crescent.Context) -> None:
-        new_page = notion.Page.create(TIMETRACK_DB, page_title=self.description)
+        await ctx.respond(f'Starting timer for {self.category}..', ephemeral=True, flags=16)
 
-        global ACTIVE_TIMER_ID
-        ACTIVE_TIMER_ID = new_page.id
-      
-        content = f"""
-        Page created in `notion.Database('{new_page.parent_id}')`.\nnew_page = `notion.Page('{new_page.id}')`.
-        """
-        hook = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
-                                   content=content, rate_limit_retry=True, timeout=10)
-        await ctx.respond(f'Timer started for `{self.description}`.', ephemeral=True, flags=16) 
-        await hook.execute()
-
-
-@bot.include
-@queries.child
-@crescent.command(name='active', description='Query for any active timers.')
-async def query_active(ctx: crescent.Context) -> None:
-    query_payload = notion.request_json(
-        query.PropertyFilter.checkbox('active', 'equals', True))
-    results = TIMETRACK_DB.query(payload=query_payload).get('results')
-
-    if results is None:
-        await ctx.respond('No active timers found.')
-
-    for obj in results:
-        name = obj['properties']['name']['title'][0]['plain_text']
-        id =  obj['id'].replace('-','')
-        timer = obj['properties']['timer']['formula']['number']
+        new_timer = notion.Page.create(TIMETRACK_DB, page_title=self.category)
         
-        content = f"""
-        Active timer:\nname: `{name}`\nobject: `notion.Page('{id}')`\ntimer: `{timer}`
-        """
-        await ctx.respond(content) 
+        rollup_category = f"rollup_{self.category}"
+        timer_category = f"timer_{self.category}"
+        sum_category = f"sum_{self.category}"
+        
+        try:
+            # checks to see if a related column already exists.
+            TIMETRACK_DB.property_schema[rollup_category]
+        except KeyError:
+            # creates a new one if not found, and notifies the function may take longer.
+            await ctx.edit("Creating new rollup properties..")
+            # synced property name key has some bugs with notion api at time of commit,
+            TIMETRACK_DB.add_relation_column(ROLLUP_DB.id, ' ', property_name=rollup_category)
+            # so have to rename the synced property from default separately.
+            ROLLUP_DB.rename_property(f"Related to timetrack_db (rollup_{self.category})", timer_category)
+            ROLLUP_DB.add_rollup_column(timer_category, 'timer', prop.FunctionsEnum.sum, property_name=sum_category)
+
+        # query's rollup table for today's date to get id for related column.
+        params = query.PropertyFilter.text('name', 'title', 'equals', f"{datetime.today().date()}")
+        result = ROLLUP_DB.query(payload=params, filter_property_values=['name'])
+        related_id = [match.value for match in parse("$.results[*].id").find(result)]
+        new_timer.set_related(rollup_category, related_id)
+
+        _content_page = f"New page created in `notion.Database('{new_timer.parent_id}')`"
+        _content_id = f"New page ID: `{new_timer.id}`."
+        content = f"{ctx.user.mention}\n{_content_page}\n{_content_id}"
+        await ctx.followup(content) 
+
+
+# ~~~~~ End Timer ~~~~~
+
+
+async def autocomplete_active_timers(
+    ctx: crescent.AutocompleteContext, option: hikari.AutocompleteInteractionOption
+) -> list[hikari.CommandChoice]:
+    # query for active entries is limited to past week,
+    # and filters properties returned to help reduce time.
+    query_payload = notion.request_json(
+        query.CompoundFilter(
+            query.AndOperator(
+                query.PropertyFilter.checkbox('active', 'equals', True),
+                query.TimestampFilter.created_time('past_week', {}))),
+            query.SortFilter([query.EntryTimestampSort.created_time_descending()]
+            )
+        )
+    results = TIMETRACK_DB.query(payload=query_payload, 
+                                 filter_property_values=['name','id','timer']
+                                 ).get('results')
+
+    list_responses = []
+    if results:
+        for obj in results:
+            name = obj['properties']['name']['title'][0]['plain_text']
+            id = obj['id'].replace('-','')
+            timer = obj['properties']['timer']['formula']['number']
+            display_name = f"Name: {name} | Duration: {timer}"
+            list_responses.append(hikari.CommandChoice(name=display_name, value=id))
+        return list_responses
+    else:
+        return [hikari.CommandChoice(name='No active timers to display.', value='null')]
 
 
 @bot.include
 @end.child
-@crescent.command(name='active', description='End the active timer in the current session.')
-async def end_active(ctx: crescent.Context) -> None:
-    try:
-        active_page = notion.Page(ACTIVE_TIMER_ID)
-        active_page.update_checkbox('end', True)
-        content = f"""
-        `notion.Page('{active_page.id}')` in `notion.Database('{active_page.parent_id}')` updated.\nSet property item `end` to `True`.
-        """
-        notification = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
-                                           content=content, rate_limit_retry=True, timeout=10)
-        await ctx.respond(f'Timer Ended.', ephemeral=True, flags=16) 
-        await notification.execute()
-    except NameError:
-        await ctx.respond(
-            'No active timer set, or global variable unassigned.\nUse `/end id`.')
-
-
-@bot.include
-@end.child
-@crescent.command(name='id', description='End the active timer with the associated id.')
-class end_id:
-    page_id = crescent.option(str, description='Retrieve with `/check active`.')
+@crescent.command(name="timer", description="End any active timers.")
+class EndTimer:
+    active_timer = crescent.option(str, "Select an option to stop.", 
+                                   autocomplete=autocomplete_active_timers)
 
     async def callback(self, ctx: crescent.Context) -> None:
-        active_page = notion.Page(self.page_id)
-        active_page.update_checkbox('end', True)
-        content = f"""
-        `notion.Page('{self.page_id}')` in `notion.Database('{active_page.parent_id}')` updated.\nSet property item `end` to `True`.
-        """
-        notification = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
-                                           content=content, rate_limit_retry=True, timeout=10)
-        await ctx.respond(f'Timer Ended.', ephemeral=True, flags=16) 
-        await notification.execute()
+        # without 'null' value, autocomplete search fails to load in discord.
+        if self.active_timer == 'null':
+            await ctx.respond(f"Nothing to stop!", ephemeral=True)
+        else:
+            await ctx.respond(f"Stopping timer...", ephemeral=True)
+            active_page = notion.Page(self.active_timer)
+            active_page.set_checkbox('end', True)
+            await ctx.followup(f"Timer ended!")
+
+
+# ~~~~~ Delete Page ~~~~~
 
 
 @bot.include
 @delete.child
-@crescent.command(name='page_id', description='Delete the page associated with the input UUID.')
+@crescent.command(name='page', description='Delete the page associated with the input UUID.')
 class delete_page_id:
     uuid = crescent.option(str, description='page id')
 
     async def callback(self, ctx: crescent.Context) -> None:
-        page_as_block = notion.Block(self.uuid).delete_self
+        notion.Block(self.uuid).delete_self
+        await ctx.respond(f"Deleted `notion.Page('{self.uuid}')`.", ephemeral=True, flags=16) 
 
-        content = f"""Deleted `notion.Page('{self.uuid}')`."""
-        hook = AsyncDiscordWebhook(url=WEBHOOK_NOTION_INTEGRATION, 
-                                   content=content, rate_limit_retry=True, timeout=10)
-        await ctx.respond(f'Done!', ephemeral=True, flags=16) 
-        await hook.execute()
+
+# ~~~~~ Entry List ~~~~~
+
+
+@bot.include
+@options.child
+@crescent.command(name='add', description='Add a new option for dropdown entries')
+class entry_list_add:
+    page_title = crescent.option(str, description='Name to add to list.')
+
+    async def callback(self, ctx: crescent.Context):
+        notion.Page.create(OPTIONS_DB, page_title=self.page_title)
+        await ctx.respond(f"Added a new option for {self.page_title}.", ephemeral=True)
+
+
+@bot.include
+@options.child
+@crescent.command(name='delete', description='Delete an exisiting option from the dropdown entries')
+class entry_list_delete:
+    page_title = crescent.option(str, description='Name to remove from list.')
+
+    async def callback(self, ctx: crescent.Context):
+        params = notion.request_json(
+            query.PropertyFilter.text('lifetime_entries', 'title', 'contains', self.page_title))
+        response = OPTIONS_DB.query(payload=params, 
+                                    filter_property_values=['lifetime_entries'])['results'][0]
+        notion.Block(response['id']).delete_self()
+        await ctx.respond(f"Deleted option for {self.page_title}.", ephemeral=True)
+
+
+# ~~~~~ Other ~~~~~
 
 
 @bot.listen()
-async def test_listen(event: hikari.MessageCreateEvent) -> None:
+async def links(event: hikari.MessageCreateEvent) -> None:
     if not event.is_human:
         return
     if event.content == "--status":
         await event.message.respond("https://discordstatus.com/")
+    if event.content == "--notionupdates":
+        await event.message.respond("https://www.notion.so/releases")
+    if event.content == "--notionchangelog":
+        await event.message.respond("https://developers.notion.com/page/changelog")
+
+
+g = Github(os.getenv('GITHUB_TOKEN'))
+repo_notion_api = g.get_user().get_repo('notion-api')
+repo_discord_bot = g.get_user().get_repo('discord-notion-timetracking-bot')
+
+async def embed_repo_notion_api():
+    response = AsyncDiscordWebhook(url=AYVIBOT_HELPER, rate_limit_retry=True)
+    embed = DiscordEmbed(title="AYVI-0001 / notion-api")
+    embed.set_url(repo_notion_api.svn_url)
+    embed.set_footer(text=f"Last updated at: {repo_discord_bot.updated_at}")
+    embed.set_color('9146ff')
+    embed.set_timestamp()
+    response.add_embed(embed)
+    await response.execute()
+
+async def embed_discord_bot():
+    response = AsyncDiscordWebhook(url=AYVIBOT_HELPER, rate_limit_retry=True)
+    embed = DiscordEmbed(title="AYVI-0001 / discord-notion-timetracking-bot")
+    embed.set_url(repo_discord_bot.svn_url)
+    embed.set_footer(text=f"Last updated at: {repo_discord_bot.updated_at}")
+    embed.set_color('9146ff')
+    embed.set_timestamp()
+    response.add_embed(embed)
+    await response.execute()
+
+
+@bot.include
+@crescent.user_command
+async def GithubRepos(ctx: crescent.Context, user: hikari.User):
+    await ctx.respond(
+        f"{ctx.user.mention}\nRepos for this bot, and the notion api wrapper used.")
+    await embed_repo_notion_api()
+    await embed_discord_bot()
+
+
+class LinkRollupDB(miru.Button):
+    def __init__(self) -> None:
+        super().__init__(style=hikari.ButtonStyle.LINK, 
+                         label="Total Rollups", 
+                         url=os.getenv('LINK_ROLLUP_DB'))
+
+class LinkTimesheetDB(miru.Button):
+    def __init__(self) -> None:
+        super().__init__(style=hikari.ButtonStyle.LINK, 
+                         label="Time tracking", 
+                         url=os.getenv('LINK_TIMESHEET'))
+
+class LinkOptionsDB(miru.Button):
+    def __init__(self) -> None:
+        super().__init__(style=hikari.ButtonStyle.LINK, 
+                         label="Options", 
+                         url=os.getenv('LINK_TIMESHEET_OPTIONS'))
+
+
+@bot.include
+@crescent.user_command
+async def DatabaseLinks(ctx: crescent.Context, user: hikari.User):
+    view = miru.View(timeout=60)
+    view.add_item(LinkRollupDB())
+    view.add_item(LinkTimesheetDB())
+    view.add_item(LinkOptionsDB())
+    await ctx.respond(f"{ctx.user.mention}\nLinks to Notion Databases:", components=view.build())
+
+
+@bot.include
+@check.child
+@crescent.command(name="bot", description="...")
+async def check_if_live(ctx: crescent.Context) -> None:
+    await ctx.defer()
+    await asyncio.sleep(2)
+    if bot.is_alive:
+        await ctx.respond("heyo")
+
+
+# ~~~~~ Run ~~~~~
 
 
 if __name__ == "__main__":
-    bot.run(
-        activity=hikari.Activity(
-        name=":ON AYVI PC:",
-        type=hikari.ActivityType.PLAYING),
-    )
-
-# run with optimizations
-# python -OO bot.py
+    miru.install(bot)
+    bot.run(activity=hikari.Activity(
+            name="RUNNING ON GCP",
+            type=hikari.ActivityType.PLAYING),
+        )
