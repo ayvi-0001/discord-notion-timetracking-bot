@@ -14,7 +14,7 @@ def validate_response(response: JSONObject | typing.Mapping[str, typing.Any]) ->
     Example:
     ```py
     page = notion.Page("12345")
-    notion.check_exceptions(page.retrieve())
+    notion.validate_response(page.retrieve())
 
     # Object for invalid Notion requests:
     # { 
@@ -24,14 +24,14 @@ def validate_response(response: JSONObject | typing.Mapping[str, typing.Any]) ->
     #   'message': 'path failed validation: path.page_id should be a valid uuid, instead was `"12345"`.'
     # }
 
-    >>> check_exceptions(response)
+    >>> validate_response(response)
     ```
     ---
     ```sh
     Traceback (most recent call last):
       File "c:\path\to\file\_.py", line 212, in <module>
-        check_exceptions(response)
-      File "c:\path\to\file\_.py", line 186, in check_exceptions
+        validate_response(response)
+      File "c:\path\to\file\_.py", line 186, in validate_response
         raise NotionValidationError(message)
     notion.exceptions.errors.NotionValidationError: path failed validation: path.page_id should be a valid uuid, instead was `"12345"`.
     Error 400:

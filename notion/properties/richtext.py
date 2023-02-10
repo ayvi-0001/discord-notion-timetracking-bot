@@ -65,6 +65,7 @@ class Mention(build.NotionObject):
     
     @classmethod
     def user(cls, user_object: UserObject, /, *, annotations: Annotations | None = None):
+        """ Cannot mention Bots - will return `notion.exceptions.errors.NotionValidationError`: Content creation Failed."""
         return cls(_mention_object=user_object, annotations=annotations)
 
     @classmethod
@@ -142,4 +143,4 @@ class Annotations(build.NotionObject):
         self.set('code', code) if code else None
         
         if not any([[bold, italic, strike, underline, code, color]]):
-            pass
+            pass # annotations must be defined or non-existent, or Notion will return error

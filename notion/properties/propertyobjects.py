@@ -13,6 +13,7 @@ import typing
 
 from notion.core import build
 from notion.core import database_logger
+
 from notion.properties.options import PropertyColors
 from notion.properties.options import NumberEnum
 from notion.properties.options import FunctionsEnum

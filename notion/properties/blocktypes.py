@@ -273,7 +273,6 @@ class CodeBlocktype(build.NotionObject, BlockTypeObjects):
         self.set('code', self._code)
 
 
-
 class ChildPageBlocktype(build.NotionObject, BlockTypeObjects):
     """Creating and Updating child_pages:
 

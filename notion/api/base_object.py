@@ -9,7 +9,7 @@ from datetime import tzinfo
 
 from uuid import UUID
 from pytz import timezone # type: ignore[import]
-from pydantic.dataclasses import dataclass
+from dataclasses import dataclass
 
 from notion.api._about import *
 from notion.api.client import *

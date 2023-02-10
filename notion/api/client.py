@@ -3,7 +3,6 @@ import os
 from typing import Sequence
 from typing import TypeAlias
 
-import json
 import requests
 import orjson
 
@@ -88,7 +87,7 @@ class _NotionClient:
                 payload = orjson.dumps(payload)
             response = requests.post(url, headers=self.headers, json=payload)
         
-        content = json.loads(response.text)
+        content = orjson.loads(response.text)
         validate_response(content)
         return content
 
@@ -101,7 +100,7 @@ class _NotionClient:
                 payload = orjson.dumps(payload)
             response = requests.post(url, headers=self.headers, data=payload)
         
-        content = json.loads(response.text)
+        content = orjson.loads(response.text)
         validate_response(content)
         return content
 
@@ -111,13 +110,13 @@ class _NotionClient:
             payload = orjson.dumps(payload)
         response = requests.patch(url, headers=self.headers, data=payload)
         
-        content = json.loads(response.text)
+        content = orjson.loads(response.text)
         validate_response(content)
         return content
 
     def _delete(self, url: NotionEndpoint, /) -> JSONObject:
         response = requests.delete(url, headers=self.headers)
         
-        content = json.loads(response.text)
+        content = orjson.loads(response.text)
         validate_response(content)
         return content

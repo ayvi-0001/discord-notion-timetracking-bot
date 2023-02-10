@@ -65,7 +65,6 @@ class Page(_BaseNotionBlock):
 
         return cls(new_page['id'])
 
-    # TODO FILTER_PROPERTIES NOT YET IMPLEMENTED
     def retrieve(self, *, filter_properties: list[str] | None = None) -> JSONObject:
         """ Retrieves a Page object using the ID specified.
 
@@ -89,14 +88,6 @@ class Page(_BaseNotionBlock):
     @property
     def properties(self) -> JSONObject:
         return self.retrieve()['properties']
-
-    #TODO confirm above works then remove
-    def retrieve_filtered_property(self, property_name: list[str]) -> JSONObject:
-        _pages_endpoint_filtered_prop = self._pages_endpoint(self.id) + '?'
-        for name in property_name:
-            name_id = self.properties[name]['id']
-            _pages_endpoint_filtered_prop += 'filter_properties=' + name_id + '&'
-        return self._get(_pages_endpoint_filtered_prop)
 
     def _retrieve_property_id(self, property_name: str, /) -> str:
         """ Internal function to retrieve id of a property. """
@@ -190,63 +181,3 @@ class Page(_BaseNotionBlock):
         payload = request_json(Properties(
             RelationPropertyValue(selected_options, property_name=column_name)))
         return self._patch(self._pages_endpoint(self.id), payload=payload)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    # 
-    # def set_select(self, column_name: str, select_option: str, /): 
-    #     schema = Database(self.parent_id).property_schema
-    #     options = schema[column_name]['select']['options']
-    #     map_colors = [{o.get('name'): o['color']} for o in options]
-        
-    #     try:
-    #         select_op_col = [c[select_option] for c in map_colors if select_option in c][0]
-    #         payload = request_json(Properties(SelectPropertyValue(
-    #             Option(select_option, select_op_col), property_name=column_name)))
-    #     except IndexError:
-    #         # If index is out of range, then selected option is not yet in schema.
-    #         # New select option will be created with a default color.
-    #         payload = request_json(Properties(SelectPropertyValue(
-    #             Option(select_option, PropertyColors.default), property_name=column_name)))
-
-    #     return self._patch(self._endpoint('pages', object_id=self.id), payload=payload)
-
-
-    # 
-    # def set_multiselect(self, column_name: str, multi_select_options: list[str], /): 
-    #     selected_options: list = []
-
-    #     schema = Database(self.parent_id).property_schema
-    #     options = schema[column_name]['multi_select']['options']
-    #     map_colors = [{o.get('name'): o['color']} for o in options]
-
-    #     for option in multi_select_options:
-    #         try:
-    #             select_op_col = [c[option] for c in map_colors if option in c][0]
-    #             selected_options.append(Option(option, select_op_col))
-    #         except IndexError:
-    #             selected_options.append(Option(option))
-
-
-    #     payload = request_json(Properties(
-    #         MultiSelectPropertyValue(selected_options, property_name=column_name)))
-
-    #     return self._patch(self._endpoint('pages', object_id=self.id), payload=payload)
-
-
-        # get_value = operator.itemgetter(multiselect_options)
-        # get_values = functools.partial(map, get_value)
-        # select_op_col = list(get_values(map_colors))

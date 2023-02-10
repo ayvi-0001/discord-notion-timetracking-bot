@@ -1,6 +1,5 @@
 import typing
 
-import json
 import orjson
 
 from notion.core.typedefs import *
