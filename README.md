@@ -18,11 +18,13 @@ import hikari
 import miru
 import crescent
 from crescent.ext import tasks
+
 from discord_webhook import AsyncDiscordWebhook
 from discord_webhook import DiscordEmbed
+from requests.exceptions import Timeout
 
 from github import Github
-from jsonpath_ng import parse
+from jsonpath_ng.ext import parse
 
 import notion
 import notion.properties as prop
@@ -64,24 +66,34 @@ Honestly, not terribly disappointed. This was originally broken down into separa
 ---
 ## Discord Commands
 
-There are 3 databases in Notion used by the bot.
+There are 3 databases in Notion used by the bot, and functions are split into 3 plugins.
 
 ```py
 # individual time entries
-TIMETRACK_DB = notion.Database(os.getenv('TIMETRACK_DB_ID'))
+NDB_TIMETRACK = notion.Database(os.environ['NDB_TIMETRACK_ID'])
 # table to sum all entries for each category
-ROLLUP_DB = notion.Database(os.getenv('ROLLUP_DB_ID'))
+NDB_ROLLUP = notion.Database(os.environ['NDB_ROLLUP_ID'])
 # category names used for autocompleting dropdowns
-OPTIONS_DB = notion.Database(os.getenv('OPTIONS_DB_ID'))
+NDB_OPTIONS = notion.Database(os.environ['NDB_OPTIONS_ID'])
+
+INTENTS = hikari.Intents.ALL_PRIVILEGED | hikari.Intents.DM_MESSAGES | hikari.Intents.GUILD_MESSAGES
+
+bot = hikari.GatewayBot(token=os.environ['DISCORD_TOKEN'], intents=INTENTS)
+client = crescent.Client(app=bot)
+
+client.plugins.load_folder("bot.timer")
+client.plugins.load_folder("bot.cron")
+client.plugins.load_folder("bot.views")
 ```
 
-Each morning at 04:00, the bot will create a daily page in the rollup database for time entries to relate to.
+Each morning the bot will create a daily page in the rollup database for time entries to relate to.
 
 ```py
-@bot.include 
-@tasks.cronjob('0 4 * * *')
+@plugin.include 
+@tasks.cronjob('0 0 * * *')
 async def create_daily_rollup_page() -> None:
-    new_rollup_page = notion.Page.create(ROLLUP_DB, page_title=f"{datetime.today().date()}")
+    # rollup page that time entries will relate to for totals.
+    new_rollup_page = notion.Page.create(NDB_ROLLUP, page_title=f"{datetime.today().date()}")
     new_rollup_page.set_date('time_created', datetime.today())
 ```
 
@@ -99,10 +111,12 @@ This column gets queried when using the `/start timer` command in Discord to aut
 async def autocomplete_options(
     ctx: crescent.AutocompleteContext, option: hikari.AutocompleteInteractionOption
 ) -> list[hikari.CommandChoice]:
-    r = OPTIONS_DB.query(filter_property_values=['lifetime_entries'])
-    # grabs plain_text key from name column in notion.
-    entries = [m.value for m in parse("$.results[*].properties..plain_text").find(r)]
+
+    results = NDB_OPTIONS.query(filter_property_values=['lifetime_entries'])
+    expr = "$.results[*].properties..plain_text"
+    entries = [m.value for m in parse(expr).find(results)]
     list_options = [hikari.CommandChoice(name=e, value=e) for e in entries]
+
     return list_options
 ```
 
@@ -111,16 +125,20 @@ If the input name is a new category, then it'll create the relation between the 
 that is used to calculate totals.
 
 ```py
-@bot.include
+@plugin.include
 @start.child
-@crescent.command(name="timer", description="Start new preset timer.")
+@crescent.command(
+    name="timer", description="Start new preset timer."
+)
 class start_timer:
-    category = crescent.option(str, "Select a time entry", autocomplete=autocomplete_options)
+    category = crescent.option(
+        str, "Select a time entry", autocomplete=autocomplete_options)
 
     async def callback(self, ctx: crescent.Context) -> None:
-        await ctx.respond(f'Starting timer for {self.category}..', ephemeral=True, flags=16)
 
-        new_timer = notion.Page.create(TIMETRACK_DB, page_title=self.category)
+        await ctx.respond(f'Starting timer for {self.category}..', flags=16)
+
+        new_timer = notion.Page.create(NDB_TIMETRACK, page_title=self.category)
         
         rollup_category = f"rollup_{self.category}"
         timer_category = f"timer_{self.category}"
@@ -128,33 +146,41 @@ class start_timer:
         
         try:
             # checks to see if a related column already exists.
-            TIMETRACK_DB.property_schema[rollup_category]
+            NDB_TIMETRACK.property_schema[rollup_category]
         except KeyError:
             # creates a new one if not found, and notifies the function may take longer.
             await ctx.edit("Creating new rollup properties..")
-            # synced property name key has some bugs with notion api at time of commit,
-            TIMETRACK_DB.add_relation_column(ROLLUP_DB.id, ' ', property_name=rollup_category)
+
+            # synced property name key currently has some bugs with notion api,
+            NDB_TIMETRACK.add_relation_column(NDB_ROLLUP.id, ' ', property_name=rollup_category)
+
             # so have to rename the synced property from default separately.
-            ROLLUP_DB.rename_property(f"Related to timetrack_db (rollup_{self.category})", timer_category)
-            ROLLUP_DB.add_rollup_column(timer_category, 'timer', prop.FunctionsEnum.sum, property_name=sum_category)
+            default_name = f"Related to NDB_TIMETRACK (rollup_{self.category})"
+            NDB_ROLLUP.rename_property(default_name, timer_category)
+
+            NDB_ROLLUP.add_rollup_column(
+                timer_category, 'timer', prop.FunctionsEnum.sum, property_name=sum_category
+                )
 
         # query's rollup table for today's date to get id for related column.
-        params = query.PropertyFilter.text('name', 'title', 'equals', f"{datetime.today().date()}")
-        result = ROLLUP_DB.query(payload=params, filter_property_values=['name'])
+        params = query.PropertyFilter.text('name', 'title', 'equals', TODAY)
+
+        result = NDB_ROLLUP.query(payload=params, filter_property_values=['name'])
         related_id = [match.value for match in parse("$.results[*].id").find(result)]
+        
         new_timer.set_related(rollup_category, related_id)
 
-        _content_page = f"New page created in `notion.Database('{new_timer.parent_id}')`"
-        _content_id = f"New page ID: `{new_timer.id}`."
-        content = f"{ctx.user.mention}\n{_content_page}\n{_content_id}"
-        await ctx.followup(content) 
+        _content_page = f"Started new timer for `{self.category}`!"
+        _content_id = f"New page `uuid` ref: `{new_timer.id}`."
+        content = f"{ctx.user.mention} {_content_page}\n{_content_id}"
+        await ctx.edit(content) 
+
 ```
 
 <p float="middle">
   <img src="doc/options.png">  
   <img src="doc/start_timer.png">  
 </p>
-<br></br>
 
 ---
 
@@ -164,55 +190,73 @@ Same as the autocomplete function used when starting a timer - the `/end timer` 
 and display the name and current duration.
 
 ```py
+
 async def autocomplete_active_timers(
     ctx: crescent.AutocompleteContext, option: hikari.AutocompleteInteractionOption
 ) -> list[hikari.CommandChoice]:
-    # query for active entries is limited to past week,
-    # and filters properties returned to help reduce time.
-    query_payload = notion.request_json(
-        query.CompoundFilter(
-            query.AndOperator(
-                query.PropertyFilter.checkbox('active', 'equals', True),
-                query.TimestampFilter.created_time('past_week', {}))),
-            query.SortFilter([query.EntryTimestampSort.created_time_descending()]
-            )
-        )
-    results = TIMETRACK_DB.query(payload=query_payload, 
-                                 filter_property_values=['name','id','timer']
-                                 ).get('results')
 
-    list_responses = []
+    filter_active = query.PropertyFilter.checkbox('active', 'equals', True)
+    filter_created = query.TimestampFilter.created_time('past_week', {})
+    sort = query.SortFilter([query.EntryTimestampSort.created_time_descending()])
+    and_filter = query.AndOperator(filter_active, filter_created)
+    compound = query.CompoundFilter(and_filter)
+    query_payload = notion.request_json(compound, sort)
+
+    results = NDB_TIMETRACK.query(payload=query_payload, 
+                                  filter_property_values=['name','id','timer']
+                                  ).get('results')
+
+    list_command_choices: list[hikari.CommandChoice] = []
+
     if results:
         for obj in results:
             name = obj['properties']['name']['title'][0]['plain_text']
             id = obj['id'].replace('-','')
             timer = obj['properties']['timer']['formula']['number']
             display_name = f"Name: {name} | Duration: {timer}"
-            list_responses.append(hikari.CommandChoice(name=display_name, value=id))
-        return list_responses
+            list_command_choices.append(hikari.CommandChoice(name=display_name, value=id))
+        return list_command_choices
+
     else:
         return [hikari.CommandChoice(name='No active timers to display.', value='null')]
 
 
-@bot.include
+async def update_daily_total(ctx: crescent.Context) -> None:
+    filter = query.PropertyFilter.text('name', 'title', 'equals', TODAY)
+    result = NDB_ROLLUP.query(payload=filter, filter_property_values=['total'])
+    expr = "$.results[*].properties.total..number"
+    total = [match.value for match in parse(expr).find(result)][0]
+
+    await ctx.respond(
+        f"{ctx.user.mention} | Updated daily total: **{total} hrs**", ephemeral=True
+        ) 
+
+
+@plugin.include
 @end.child
-@crescent.command(name="timer", description="End any active timers.")
+@crescent.hook(update_daily_total, after=True)
+@crescent.command(
+    name="timer", description="End any active timers."
+)
 class EndTimer:
-    active_timer = crescent.option(str, "Select an option to stop.", 
-                                   autocomplete=autocomplete_active_timers)
+    active_timer = crescent.option(
+        str, "Select an option to stop.", autocomplete=autocomplete_active_timers)
 
     async def callback(self, ctx: crescent.Context) -> None:
+
         # without 'null' value, autocomplete search fails to load in discord.
         if self.active_timer == 'null':
-            await ctx.respond(f"Nothing to stop!", ephemeral=True)
+            await ctx.respond(f"{ctx.user.mention} Nothing to stop!")
+
         else:
-            await ctx.respond(f"Stopping timer...", ephemeral=True)
-            active_page = notion.Page(self.active_timer)
-            active_page.set_checkbox('end', True)
-            await ctx.followup(f"Timer ended!")
+            await ctx.respond(f"Stopping timer...")
+            notion.Page(self.active_timer).set_checkbox('end', True)
+            await ctx.edit(f"{ctx.user.mention} Timer ended! `uuid` ref: `{self.active_timer}`")
+
 ```
 
 <img src="doc/end_active_list.png">  
+<img src="doc/end_timer.png">  
 
 This can be used both to end, or view what is running.  
 Entries can also be deleted using the page's uuid and the command `/delete id`.  
