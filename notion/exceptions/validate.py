@@ -1,32 +1,55 @@
+# MIT License
+
+# Copyright (c) 2023 ayvi#0001
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 from notion.exceptions.errors import *
 from notion.core.typedefs import *
 
-import typing
+from typing import Sequence
+from typing import Mapping
+from typing import Union
+from typing import Any
 
-__all__: typing.Sequence[str] = ['validate_response']
+__all__: Sequence[str] = ["validate_response"]
 
 
-def validate_response(response: JSONObject | typing.Mapping[str, typing.Any]) -> _NotionErrors | None:
+def validate_response(
+    response: Union[JSONObject, Mapping[str, Any]]
+) -> _NotionErrors | None:
     r"""
-    To be used on response from notion.Page | notion.Database | notion.Block,
-    Not for instantiation.
+    To be used on responses from notion.Page | notion.Database | notion.Block.
 
     Example:
     ```py
     page = notion.Page("12345")
-    notion.validate_response(page.retrieve())
 
     # Object for invalid Notion requests:
-    # { 
-    #   'object': 'error', 
-    #   'status': 400, 
-    #   'code': 'validation_error', 
+    # {
+    #   'object': 'error',
+    #   'status': 400,
+    #   'code': 'validation_error',
     #   'message': 'path failed validation: path.page_id should be a valid uuid, instead was `"12345"`.'
     # }
-
-    >>> validate_response(response)
     ```
-    ---
+    ------
     ```sh
     Traceback (most recent call last):
       File "c:\path\to\file\_.py", line 212, in <module>
@@ -35,14 +58,14 @@ def validate_response(response: JSONObject | typing.Mapping[str, typing.Any]) ->
         raise NotionValidationError(message)
     notion.exceptions.errors.NotionValidationError: path failed validation: path.page_id should be a valid uuid, instead was `"12345"`.
     Error 400:
-    The request body does not match the schema for the expected parameters.    
+    The request body does not match the schema for the expected parameters.
     ```
-    ---
+
     https://developers.notion.com/reference/errors
     """
-    if 'error' in response.values():
-        code = response['code']    
-        message = response['message']
+    if "error" in response.values():
+        code = response["code"]
+        message = response["message"]
 
         if "invalid_json" in code:
             raise NotionInvalidJson(message)
@@ -70,6 +93,5 @@ def validate_response(response: JSONObject | typing.Mapping[str, typing.Any]) ->
             raise NotionServiceUnavailable(message)
         if "database_connection_unavailable" in code:
             raise NotionDatabaseConnectionUnavailable(message)
-    else:
-        pass
+
     return None

@@ -1,16 +1,38 @@
+# MIT License
+
+# Copyright (c) 2023 ayvi#0001
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 from typing import Sequence
 from enum import Enum
 
 __all__: Sequence[str] = (
-    "CodeEnum",
-    "ColorEnum",
-    "FunctionsEnum",
-    "NumberEnum",
-    "PropertyColors"
-    )
+    "NotionCodeLang",
+    "NotionColors",
+    "NotionFunctionFormats",
+    "NotionNumberFormats",
+    "PropertyColors",
+)
 
 
-class CodeEnum(str, Enum):
+class NotionCodeLang(str, Enum):
     abap = "abap"
     arduino = "arduino"
     bash = "bash"
@@ -85,7 +107,7 @@ class CodeEnum(str, Enum):
     java_or_c = "java/c/c++/c#"
 
 
-class FunctionsEnum(str, Enum):
+class NotionFunctionFormats(str, Enum):
     average = "average"
     checked = "checked"
     count_ = "count"
@@ -112,7 +134,7 @@ class FunctionsEnum(str, Enum):
     unique = "unique"
 
 
-class NumberEnum(str, Enum):
+class NotionNumberFormats(str, Enum):
     number = "number"
     number_with_commas = "number_with_commas"
     percent = "percent"
@@ -154,7 +176,7 @@ class NumberEnum(str, Enum):
     singapore_dollar = "singapore_dollar"
 
 
-class ColorEnum(str, Enum):
+class NotionColors(str, Enum):
     default = "default"
     gray = "gray"
     brown = "brown"
@@ -177,8 +199,8 @@ class ColorEnum(str, Enum):
 
 
 class PropertyColors(str, Enum):
-    """Color options for database property objects: select/multi_select/status.
-    """
+    """Color options for database property objects: select/multi_select/status."""
+
     default = "default"
     gray = "gray"
     brown = "brown"

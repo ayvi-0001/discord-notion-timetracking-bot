@@ -1,64 +1,61 @@
+# MIT License
+
+# Copyright (c) 2023 ayvi#0001
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 from __future__ import annotations
-import typing
+from typing import Sequence
+from typing import Union
 
 from notion.core import build
-from notion.query.conditions import *
 from notion.query.propfilter import PropertyFilter
-from notion.query.filterproto import FilterTypeObject
+from notion.query.timestamp import TimestampFilter
 
-__all__: typing.Sequence[str] = ('CompoundFilter', 'AndOperator', 'OrOperator')
+__all__: Sequence[str] = ["CompoundFilter"]
 
 
-class CompoundFilter(build.NotionObject, FilterTypeObject):
-    """
-    Required:
-    :param operator: Either `notion.query.AndOperator` or notion.query.OrOperator`. 
-                     array of PropertyFilter objects or CompoundFilter objects.
-                     Returns pages when any of the filters inside the provided array match.
-    ---
-    Combines several filter objects together using a logical operator `and` or `or`.  
-    Can also be combined within a compound filter, 
-    NOTE: only up to two nesting levels deep.
+class CompoundFilter(build.NotionObject):
+    """NOTE: only up to two nesting levels deep.
 
-    ---
+    :method _and(): combine all filters in an `and` grouping.
+    :method _or(): combine all filters in an `or` grouping.
+
+    Create a separate CompoundFilter object to nest an `and` operator inside another `and` or `or`.
+
     https://developers.notion.com/reference/post-database-query-filter#compound-filter-object
     """
-    __slots__: typing.Sequence[str] = ('_all')
 
-    def __init__(self, *operators: AndOperator | OrOperator) -> None:
+    __slots__: Sequence[str] = ()
+
+    def __init__(self) -> None:
         super().__init__()
 
-        self._all: dict = {}
-        for op in operators:
-            if isinstance(op, build.NotionObject) or isinstance(op, dict):
-                self._all.update(op)
-        
-        self.set('filter', self._all)
+    def _and(self, *filters: FilterTypeObjects) -> CompoundFilter:
+        filters_ = [f["filter"] if "filter" in f else f for f in filters]
+        self.nest("filter", "and", filters_)
+        return self
+
+    def _or(self, *filters: FilterTypeObjects) -> CompoundFilter:
+        filters_ = [f["filter"] if "filter" in f else f for f in filters]
+        self.nest("filter", "or", filters_)
+        return self
 
 
-class AndOperator(build.NotionObject, FilterTypeObject):
-    __slots__: typing.Sequence[str] = ('_filters')
-
-    def __init__(self, *filters: FilterTypeObject | dict) -> None:
-        super().__init__()
-        self._filters: list = []
-        
-        for f in filters:
-            if isinstance(f, dict) or isinstance(f, PropertyFilter):
-                self._filters.append(f['filter'] if 'filter' in f.keys() else f)
-
-        self.set('and', self._filters)
-
-
-class OrOperator(build.NotionObject, FilterTypeObject):
-    __slots__: typing.Sequence[str] = ('_filters')
-
-    def __init__(self, *filters: FilterTypeObject | dict) -> None:
-        super().__init__()
-        self._filters: list = []
-        
-        for f in filters:
-            if isinstance(f, dict) or isinstance(f, PropertyFilter):
-                self._filters.append(f['filter'] if 'filter' in f.keys() else f)
-
-        self.set('or', self._filters)
+FilterTypeObjects = Union[PropertyFilter, CompoundFilter, TimestampFilter]

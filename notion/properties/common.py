@@ -1,52 +1,126 @@
-import typing
+# MIT License
+
+# Copyright (c) 2023 ayvi#0001
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+from __future__ import annotations
+from typing import Sequence
+from typing import Optional
 
 from notion.core import build
 
-__all__: typing.Sequence[str] = (
+__all__: Sequence[str] = (
     "Parent",
+    "UserObject",
     "NotionUUID",
     "NotionURL",
-    "Cursor",
-    )
+)
 
-#TODO Description
-#TODO Move Caption
 
 class Parent(build.NotionObject):
+    __slots__: Sequence[str] = ()
+
     def __init__(self, id: str, /, *, type: str) -> None:
         super().__init__()
-
-        self._parent = build.NotionObject()
-        self._parent.set('type', type)
-        self._parent.set(type, id)
-        self.set('parent', self._parent)
+        self.nest("parent", "type", type)
+        self.nest("parent", type, id)
 
     @classmethod
-    def page(cls, id: str, /, *, type: str='page_id'):
-        return cls(id, type=type)
+    def page(cls, id: str, /) -> Parent:
+        return cls(id, type="page_id")
 
     @classmethod
-    def database(cls, id: str, /, *, type: str='database_id'):
-        return cls(id, type=type)
+    def database(cls, id: str, /) -> Parent:
+        return cls(id, type="database_id")
 
     @classmethod
-    def block(cls, id: str, /, *, type: str='block_id'):
-        return cls(id, type=type)
+    def block(cls, id: str, /) -> Parent:
+        return cls(id, type="block_id")
+
+
+class UserObject(build.NotionObject):
+    """
+    The User object represents a user in a Notion workspace. Users include full workspace members, and integrations.
+    Guests are not included.
+
+    ---
+    :param id: (required) Unique identifier for this user. *Always present
+    :param name: (optional) User's name, as displayed in Notion.
+    :param avatar_url: (optional)
+    :param email: (optional)
+
+    ---
+    User objects appear in the API in nearly all objects returned by the API, including:
+        - Block object under created_by and last_edited_by.
+        - Page object under created_by and last_edited_by and in people property items.
+        - Database object under created_by and last_edited_by.
+        - Rich text object, as user mentions.
+        - Property object when the property is a people property.
+
+    User objects will always contain object and id keys.
+    The remaining properties may appear if the user is being rendered in a rich text or
+    page property context, and the bot has the correct capabilities to access those properties.
+
+    ---
+    All parameters are display-only and cannot be updated in Notion.
+
+    https://developers.notion.com/reference/user
+    """
+
+    __slots__: Sequence[str] = ()
+
+    def __init__(
+        self,
+        id: str,
+        name: Optional[str] = None,
+        avatar_url: Optional[str] = None,
+        email: Optional[str] = None,
+    ) -> None:
+        super().__init__()
+        self.set("object", "user")
+        self.set("id", id)
+        self.set("name", name) if name else None
+        self.set("avatar_url", avatar_url) if avatar_url else None
+        self.set("type", "person")
+        if email:
+            self.nest("person", "email", email)
+        else:
+            self.set("person", {})  # must at least be an empty object.
 
 
 class NotionURL(build.NotionObject):
-    def __init__(self, url: str | None = None, /) -> None:
+    __slots__: Sequence[str] = ()
+
+    def __init__(self, url: str, /) -> None:
         super().__init__()
-        self.set('url', url)
+        self.set("url", url)
 
 
 class NotionUUID(build.NotionObject):
+    __slots__: Sequence[str] = ()
+
     def __init__(self, id: str, /) -> None:
         super().__init__()
-        self.set('id', id)
+        self.set("id", id)
 
 
-class Cursor(build.NotionObject):
-    def __init__(self, id: str, /) -> None:
-        super().__init__()
-        self.set('next_cursor', id)
+# TODO
+# Database Description
+# Cursor
