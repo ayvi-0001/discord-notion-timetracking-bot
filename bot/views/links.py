@@ -1,107 +1,71 @@
 import os
 from typing import Sequence
+import webbrowser
 
 import crescent
 import hikari
 import miru
-from github import Github
 
-from discord_webhook import AsyncDiscordWebhook
-from discord_webhook import DiscordEmbed
+from bot.utils import plugin
 
-plugin = crescent.Plugin[hikari.GatewayBot, None]()
-
-__all__: Sequence[str] = (
-    'LinkRollupDB',
-    'LinkTimesheetDB',
-    'LinkOptionsDB',
-    'DatabaseLinks',
-    'GithubRepos',
-    'embed_repo_notion_api',
-    'embed_discord_bot',
-)
-
-AYVIBOT_HELPER_WEBHOOK = os.environ['AYVIBOT_HELPER_WEBHOOK']
+__all__: Sequence[str] = ("DatabaseLinks",)
 
 
-class LinkRollupDB(miru.Button):
+class PersistentViewNotionLinks(miru.View):
     def __init__(self) -> None:
-        super().__init__(style=hikari.ButtonStyle.LINK, 
-                         label="Total Rollups", 
-                         url=os.getenv('LINK_ROLLUP_DB'))
+        super().__init__(timeout=None)
 
-class LinkTimesheetDB(miru.Button):
-    def __init__(self) -> None:
-        super().__init__(style=hikari.ButtonStyle.LINK, 
-                         label="Time tracking", 
-                         url=os.getenv('LINK_TIMESHEET'))
+    @miru.button(
+        label="Total Hours",
+        custom_id=os.environ[
+            "LINK_ROLLUP_DB"
+        ],  # custon_id's necessary for persistent view.
+    )
+    async def rollupdblink(self, button: miru.Button, ctx: miru.ViewContext) -> None:
+        try:
+            await ctx.respond("Opening link in default browser..", delete_after=True)
+            webbrowser.open(os.environ["LINK_ROLLUP_DB"])
+        except (OSError, webbrowser.Error) as e:
+            await ctx.respond(
+                f"{ctx.user.mention} Could not open link: {e}",
+            )
 
-class LinkOptionsDB(miru.Button):
-    def __init__(self) -> None:
-        super().__init__(style=hikari.ButtonStyle.LINK, 
-                         label="Options", 
-                         url=os.getenv('LINK_TIMESHEET_OPTIONS'))
+    @miru.button(
+        label="Timesheet",
+        custom_id=os.environ[
+            "LINK_TIMESHEET"
+        ],  # custon_id's necessary for persistent view.
+    )
+    async def timesheetdblink(self, button: miru.Button, ctx: miru.ViewContext) -> None:
+        try:
+            await ctx.respond("Opening link in default browser..", delete_after=True)
+            webbrowser.open(os.environ["LINK_TIMESHEET"])
+        except (OSError, webbrowser.Error) as e:
+            await ctx.respond(
+                f"{ctx.user.mention} Could not open link: {e}",
+            )
+
+    @miru.button(
+        label="Timesheet Options",
+        custom_id=os.environ[
+            "LINK_TIMESHEET_OPTIONS"
+        ],  # custon_id's necessary for persistent view.
+    )
+    async def optionsdblink(self, button: miru.Button, ctx: miru.ViewContext) -> None:
+        try:
+            await ctx.respond("Opening link in default browser..", delete_after=True)
+            webbrowser.open(os.environ["LINK_TIMESHEET_OPTIONS"])
+        except (OSError, webbrowser.Error) as e:
+            await ctx.respond(
+                f"{ctx.user.mention} Could not open link: {e}",
+            )
 
 
 @plugin.include
-@crescent.user_command
+@crescent.user_command(name="database-links")
 async def DatabaseLinks(ctx: crescent.Context, user: hikari.User):
-    view = miru.View(timeout=60)
-    view.add_item(LinkRollupDB())
-    view.add_item(LinkTimesheetDB())
-    view.add_item(LinkOptionsDB())
-    await ctx.respond(f"{ctx.user.mention}\nLinks to Notion Databases:", components=view.build())
-
-
-g = Github(os.environ['GITHUB_TOKEN'])
-repo_notion_api = g.get_user().get_repo('notion-api')
-repo_discord_bot = g.get_user().get_repo('discord-notion-timetracking-bot')
-
-async def embed_repo_notion_api():
-    response = AsyncDiscordWebhook(
-        url=AYVIBOT_HELPER_WEBHOOK, rate_limit_retry=True)
-    
-    embed = DiscordEmbed(title="AYVI-0001 / notion-api")
-    
-    embed.set_url(repo_notion_api.svn_url)
-    embed.set_footer(text=f"Last updated at: {repo_discord_bot.updated_at}")
-    embed.set_color('9146ff')
-    embed.set_timestamp()
-
-    response.add_embed(embed)
-    await response.execute()
-
-async def embed_discord_bot():
-    response = AsyncDiscordWebhook(
-        url=AYVIBOT_HELPER_WEBHOOK, rate_limit_retry=True)
-    
-    embed = DiscordEmbed(title="AYVI-0001 / discord-notion-timetracking-bot")
-    
-    embed.set_url(repo_discord_bot.svn_url)
-    embed.set_footer(text=f"Last updated at: {repo_discord_bot.updated_at}")
-    embed.set_color('9146ff')
-    embed.set_timestamp()
-
-    response.add_embed(embed)
-    await response.execute()
-
-
-@plugin.include
-@crescent.user_command
-async def GithubRepos(ctx: crescent.Context, user: hikari.User):
+    view = PersistentViewNotionLinks()
     await ctx.respond(
-        f"{ctx.user.mention}\nRepos for this bot, and the notion api wrapper used.")
-    await embed_repo_notion_api()
-    await embed_discord_bot()
-
-
-# @plugin.app.listen()
-# async def links(event: hikari.MessageCreateEvent) -> None:
-#     if not event.is_human:
-#         return
-#     if event.content == "--status":
-#         await event.message.respond("https://discordstatus.com/")
-#     if event.content == "--notionupdates":
-#         await event.message.respond("https://www.notion.so/releases")
-#     if event.content == "--notionchangelog":
-#         await event.message.respond("https://developers.notion.com/page/changelog")
+        f"{ctx.user.mention}  Links to Notion Databases:", components=view.build()
+    )
+    await view.start()
