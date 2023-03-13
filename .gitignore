@@ -1,0 +1,7 @@
+.mypy_cache
+.vscode
+include
+Lib
+Scripts
+.gitattributes
+pyvenv.cfg
