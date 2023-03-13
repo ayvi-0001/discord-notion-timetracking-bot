@@ -1,21 +1,8 @@
-<style>
-.images {
-    display: flex;
-    align-items: center;
-    text-align: center;
-    justify-content: center;
-}
-.inline {
-    justify-content: space-between;
-    width: 100%;
-}
-</style>
-
 The current working version of my discord bot used for logging hours and setting reminders through the Notion API. The wrapper for the Notion API is another side project I'm working on and is uploaded to a separate repo, but it's not complete or available to install as a package yet, so a copy is kept locally here as well.
 
 The bot is built with [hikari](https://github.com/hikari-py/hikari), and uses [crescent](https://github.com/hikari-crescent/hikari-crescent) as a command handler. It runs on Google's [Compute Engine](https://cloud.google.com/compute), using a docker image hosted on Container Registry. 
 
-> **_It's not currently setup to be run on another machine or added to any other discord server_**. 
+**_It's not currently setup to be run on another machine or added to any other discord server_**. 
 
 However these are both things I hope to have setup once it's complete!
 
@@ -24,7 +11,7 @@ However these are both things I hope to have setup once it's complete!
 
 Logging time entries can be done entirely on Notion. While the bot is hosted on persistant server, I chose to keep the logic for calculating hours there in the event of downtime, and the bot is still missing a few key features. Overriding start/end times and viewing a paginated list of recent entries still needs to be implemented.  
 
-<div> <center> The view in Notion: <br> <img src="images/view_db.png"> <br> </div>
+<div> <center> The view in Notion: <br> <img src="images/view_db.png" class="images"> <br> </div>
 
 - The 'timer' starts when a page is created, using the `created_time` property as start time.
 - Toggling `end`, will stop the timer and calculates total duration using the `last_edit` property as end time.
@@ -46,19 +33,15 @@ The options for timer categories are stored in a Notion database. They're added 
 
 Autocomplete functions fill in the available options for starting timers and ending active timers, or for viewing the hours on a running timer. 
 
-<figure class="images">
-    <div>
-        <img src="images/options.png" width="250" hspace="15">
-        <img src="images/start_timer.png" width="500" hspace="15"> 
-            <figcaption>Autocomplete options and start timer notification</figcaption>
-            <br>
-        <img src="images/end_active_list.png" width="300" hspace="15">
-        <img src="images/end_timer.png" width="600" hspace="15"> 
-            <figcaption>Autocomplete any active timers to stop & updated daily total</figcaption>
-    </div>
-</figure>
-
----
+<p float="middle">
+  <img src="images/options.png" hspace="15"> 
+  <img src="images/start_timer.png" hspace="15"> 
+</p>
+<br>
+<p float="middle">
+  <img src="images/end_active_list.png">  
+  <img src="images/end_timer.png">  
+</p>
 
 A page is created in the rollup table each day at midnight:
 
@@ -164,10 +147,10 @@ Options still need to be added for selecting a channel for discord reminders, an
 <figure> <center>
     <div class="images">
         <img src="images/bq_job_state_table.png" > </div>
-    <a href="https://github.com/googleapis/python-bigquery-sqlalchemy" 
-    title="This library is only compatible with SQLAlchemy versions < 2.0.0. If an incompatible version is already installed, it will be replaced with SQLAlchemy==1.4.xx">The state of each job is stored in a bigquery table using a SQLAlchemy dialect for Google BigQuery,</a>
+        <a href="https://github.com/googleapis/python-bigquery-sqlalchemy" title="This library is only compatible with SQLAlchemy versions < 2.0.0. If an incompatible version is already installed, it will be replaced with SQLAlchemy==1.4.xx">The state of each job is stored in a bigquery table using a SQLAlchemy dialect for Google BigQuery. </a>
         <figcaption>This uses the same fields that apscheduler would use in any other RDBMS:</figcaption>
         <figcaption>a job id, the next run time in a UTC timestamp, and the function to execute converted into a byte stream.</figcaption>
+        <br>
 </figure>
 
 <br>
@@ -182,6 +165,5 @@ When the job fires, this table is queried to retrieve the page, reconstitute it 
 And finally a table in the Notion UI to keep record of the jobs and current status, with the page's that the bot will mention at the next run time.
 
 <div class="images"> <img src="images/notion_reminder_records.png"> <br> </div>
-<br>
 
 ---
